@@ -1,0 +1,25 @@
+# Environment files (never commit secrets — repo is public)
+.env
+.env.*
+*.env
+
+# Build output
+/bin/
+/tmp/
+*.exe
+*.test
+*.out
+# Compiled main binary (matches module name)
+/fillout-ysws-nps
+
+# Go workspace
+go.work
+go.work.sum
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Test/automation artifacts
+/.playwright-mcp/
+home.png
