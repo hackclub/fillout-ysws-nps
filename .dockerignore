@@ -1,0 +1,15 @@
+# Keep secrets and local-only files out of the build context.
+.env
+.env.*
+*.env
+!.env.example
+
+.git
+.gitignore
+
+# Build artifacts (Air writes here at runtime via the bind mount).
+tmp/
+
+# Editor / swap files
+*.swp
+*.swo

@@ -1,0 +1,21 @@
+# Development image: builds with the Go toolchain and live-reloads via Air.
+# Not for production — source is bind-mounted and rebuilt on change.
+FROM golang:1.26.4
+
+WORKDIR /app
+
+# Install Air for live reload. Pinned for reproducible dev images.
+RUN go install github.com/air-verse/air@v1.62.0
+
+# Warm the module cache first so dependency downloads are cached across
+# source-only rebuilds. go.sum is optional (the module has no deps yet).
+COPY go.mod go.sum* ./
+RUN go mod download
+
+# Copy the source so the image can build standalone; in dev it's shadowed by
+# the bind mount in docker-compose.yml.
+COPY . .
+
+EXPOSE 8080
+
+CMD ["air", "-c", ".air.toml"]
