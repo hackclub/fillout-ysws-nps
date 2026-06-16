@@ -2,6 +2,7 @@
 .env
 .env.*
 *.env
+!.env.example
 
 # Build output
 /bin/
@@ -19,7 +20,9 @@ go.work.sum
 # Editor / OS
 .DS_Store
 *.swp
+*.swo
 
 # Test/automation artifacts
 /.playwright-mcp/
 home.png
+coverage.txt
