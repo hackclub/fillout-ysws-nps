@@ -1,0 +1,310 @@
+{{define "head"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(135deg, #ec3750 0%, #ff8c37 100%);
+      color: #fff;
+    }
+    a { color: #fff; }
+    header.bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem 1.5rem; background: rgba(0,0,0,0.18);
+    }
+    header.bar .brand { font-weight: 700; font-size: 1.1rem; }
+    header.bar nav a { margin-left: 1rem; text-decoration: none; opacity: 0.95; }
+    main { max-width: 60rem; margin: 0 auto; padding: 1.5rem; }
+    .card {
+      background: rgba(0,0,0,0.18); border-radius: 14px; padding: 1.5rem;
+      backdrop-filter: blur(6px); box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+      margin-bottom: 1.5rem;
+    }
+    h1 { margin: 0 0 0.75rem; }
+    h2 { margin: 0 0 0.75rem; font-size: 1.25rem; }
+    p { line-height: 1.5; }
+    label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
+    input[type=text], textarea, select {
+      width: 100%; padding: 0.6rem 0.7rem; border-radius: 8px; border: none;
+      font-size: 1rem; font-family: inherit;
+    }
+    .btn {
+      display: inline-block; margin-top: 1rem; padding: 0.6rem 1.1rem;
+      border-radius: 999px; border: none; cursor: pointer; font-size: 1rem;
+      font-weight: 600; background: #fff; color: #ec3750; text-decoration: none;
+    }
+    .btn.secondary { background: rgba(255,255,255,0.2); color: #fff; }
+    .btn.danger { background: rgba(0,0,0,0.25); color: #fff; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid rgba(255,255,255,0.18); vertical-align: top; }
+    th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.85; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    pre.richtext { white-space: pre-wrap; background: rgba(0,0,0,0.22); padding: 0.6rem 0.7rem; border-radius: 8px; margin: 0.3rem 0 0; font-size: 0.85rem; }
+    .pill { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.75rem; background: rgba(255,255,255,0.22); }
+    .pill.active { background: #2ecc71; color: #062b15; }
+    .pill.stopped { background: rgba(0,0,0,0.3); }
+    .muted { opacity: 0.8; font-size: 0.85rem; }
+    .flash { background: rgba(46,204,113,0.25); border: 1px solid rgba(46,204,113,0.5); padding: 0.7rem 0.9rem; border-radius: 8px; margin-bottom: 1rem; }
+    .error { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.4); padding: 0.7rem 0.9rem; border-radius: 8px; margin-bottom: 1rem; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+    .field-name { font-weight: 600; }
+  </style>
+</head>
+<body>
+{{end}}
+
+{{define "nav"}}
+<header class="bar">
+  <span class="brand">Fillout → NPS sync</span>
+  <nav>
+    {{if .UserEmail}}
+      <a href="/">Dashboard</a>
+      <a href="/forms/new">New form</a>
+      <a href="/audit">Audit log</a>
+      <span class="muted">{{.UserEmail}}</span>
+      <a href="/logout">Sign out</a>
+    {{end}}
+  </nav>
+</header>
+{{end}}
+
+{{define "foot"}}
+</body>
+</html>
+{{end}}
+
+{{define "page_login"}}
+{{template "head" .}}
+<main>
+  <div class="card" style="text-align:center">
+    <h1>Fillout → NPS sync</h1>
+    <p>Sync Net Promoter Score responses from a Fillout form into the YSWS NPS table, with AI field mapping and automatic de-duplication.</p>
+    <a class="btn" href="/login">Log in with Hack Club</a>
+  </div>
+</main>
+{{template "foot" .}}
+{{end}}
+
+{{define "page_dashboard"}}
+{{template "head" .}}
+{{template "nav" .}}
+<main>
+  {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+  <div class="card">
+    <h1>Sync jobs</h1>
+    <p class="muted">Each job polls a Fillout form and writes new submissions into its Airtable NPS table.</p>
+    <a class="btn" href="/forms/new">Set up a new form</a>
+  </div>
+
+  {{if .Jobs}}
+  <div class="card">
+    <table>
+      <thead><tr>
+        <th>Form</th><th>Target / YSWS</th><th>Set up by</th><th>Status</th><th>Synced</th><th>Last poll</th><th></th>
+      </tr></thead>
+      <tbody>
+      {{range .Jobs}}
+        <tr>
+          <td><span class="field-name">{{.FormName}}</span><br><span class="muted">{{.FormID}}</span>{{if .Tags}}<br><span class="muted">tags: {{.Tags}}</span>{{end}}</td>
+          <td>{{.BaseID}}<br><span class="muted">{{.Table}}{{if .YSWS}} · YSWS: {{.YSWS}}{{end}}</span></td>
+          <td class="muted">{{.CreatedBy}}</td>
+          <td>
+            {{if .Running}}<span class="pill active">running</span>{{else}}<span class="pill stopped">{{.Status}}</span>{{end}}
+            {{if .LastError}}<br><span class="muted">⚠ {{.LastError}}</span>{{end}}
+          </td>
+          <td>{{.Created}} created<br><span class="muted">{{.Skipped}} dupes skipped</span>{{if .Errored}}<br><span class="muted">{{.Errored}} errors</span>{{end}}</td>
+          <td class="muted">{{.LastPolled}}</td>
+          <td>
+            {{if .Running}}
+            <form method="post" action="/sync/stop" style="margin:0">
+              <input type="hidden" name="job_id" value="{{.ID}}">
+              <button class="btn danger" type="submit">Stop</button>
+            </form>
+            {{else}}
+            <form method="post" action="/sync/resume" style="margin:0">
+              <input type="hidden" name="job_id" value="{{.ID}}">
+              <button class="btn secondary" type="submit">Resume</button>
+            </form>
+            {{end}}
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="card"><p class="muted">No sync jobs yet.</p></div>
+  {{end}}
+</main>
+{{template "foot" .}}
+{{end}}
+
+{{define "page_new_form"}}
+{{template "head" .}}
+{{template "nav" .}}
+<main>
+  {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+  <div class="card">
+    <h1>Set up a new form</h1>
+    <p>Paste a Fillout form link or form ID. We'll fetch its questions and a few real submissions, then use AI to map each question onto the NPS table.</p>
+    <form method="post" action="/forms/preview">
+      <label for="form_input">Fillout form link or ID</label>
+      <input type="text" id="form_input" name="form_input" placeholder="forms.fillout.com/t/… · build.fillout.com/editor/… · or the form ID" value="{{.FormInput}}" required>
+      <button class="btn" type="submit">Preview mapping</button>
+    </form>
+  </div>
+</main>
+{{template "foot" .}}
+{{end}}
+
+{{define "page_preview"}}
+{{template "head" .}}
+{{template "nav" .}}
+<main>
+  {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+  <form method="post" action="/sync/start">
+    <input type="hidden" name="form_id" value="{{.FormID}}">
+    <input type="hidden" name="form_name" value="{{.FormName}}">
+
+    <div class="card">
+      <h1>{{.FormName}}</h1>
+      <p class="muted">Form ID: {{.FormID}} · writing to base {{.BaseID}}, table “{{.Table}}”.</p>
+      <label for="ysws_program">YSWS program to link <span class="muted">(required)</span></label>
+      <input type="text" id="ysws_program" name="ysws_program" list="ysws-programs" placeholder="Search YSWS programs…" value="{{.YSWSProgram}}" required autocomplete="off">
+      <datalist id="ysws-programs">
+        {{range .Programs}}<option value="{{.}}"></option>{{end}}
+      </datalist>
+      <p class="muted">Every synced record is linked to this program in the NPS “YSWS” field. Start typing to search {{len .Programs}} programs.</p>
+
+      <label for="tags">Tags to add to feedback entries <span class="muted">(encouraged)</span></label>
+      <input type="text" id="tags" name="tags" placeholder="e.g. 2026-06-15_2nd_newsletter_feedback, newsletter" value="{{.Tags}}" autocomplete="off">
+      <p class="muted">Comma-separated, one word each (dashes/underscores ok). Labels where this feedback came from; added to every record's Tags column.</p>
+      {{if .TagExamples}}
+      <p class="muted">Example feedback tags from past programs:
+        {{range $i, $e := .TagExamples}}{{if $i}} · {{end}}<strong>{{$e.Program}}</strong>: {{$e.Tags}}{{end}}
+      </p>
+      {{end}}
+    </div>
+
+    <div class="card">
+      <h2>Field mapping</h2>
+      <p class="muted">Each form question feeds the NPS column chosen below. “Custom Fields (catch-all)” keeps the answer verbatim; “Ignore” drops it. For the two feedback columns you can add an optional template to make the text read well — use <code>{{"{{question}}"}}</code> and <code>{{"{{answer}}"}}</code> (leave blank to copy the answer directly).</p>
+      <table>
+        <thead><tr><th>Form question</th><th>Type</th><th>NPS column it fills</th><th>Why</th></tr></thead>
+        <tbody>
+        {{range .Mappings}}
+          <tr>
+            <td class="field-name">{{.QuestionName}}<br><span class="muted">{{.QuestionID}}</span></td>
+            <td class="muted">{{.QuestionType}}</td>
+            <td>
+              <select name="target_{{.QuestionID}}" class="target-select" data-qid="{{.QuestionID}}">
+                {{$sel := .Target}}
+                {{range $.Targets}}
+                  <option value="{{.Value}}" {{if eq .Value $sel}}selected{{end}}>{{.Label}}</option>
+                {{end}}
+              </select>
+              <input type="text" class="template-input" id="template_{{.QuestionID}}" name="template_{{.QuestionID}}" value="{{.Template}}" placeholder="optional template, e.g. **{{"{{question}}"}}** {{"{{answer}}"}}" autocomplete="off" style="margin-top:0.4rem; display:none">
+            </td>
+            <td class="muted">{{if .Confidence}}<span class="pill">{{.Confidence}}</span> {{end}}{{.Reasoning}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Preview: first {{len .Samples}} submissions as NPS records</h2>
+      {{if not .Samples}}<p class="muted">This form has no submissions yet.</p>{{end}}
+      {{range .Samples}}
+        <div class="card" style="background:rgba(0,0,0,0.12)">
+          <p class="muted">Submission {{.SubmissionID}} · {{.SubmissionTime}}</p>
+          <table>
+            <tbody>
+            {{range .Fields}}
+              <tr>
+                <td class="field-name" style="width:30%">{{.Name}}</td>
+                <td>{{if .Pre}}<pre class="richtext">{{.Value}}</pre>{{else}}{{.Value}}{{end}}</td>
+              </tr>
+            {{end}}
+            </tbody>
+          </table>
+        </div>
+      {{end}}
+    </div>
+
+    <div class="card">
+      <p>Starting the sync writes these records to Airtable now and keeps polling for new submissions. Records already present (synced by us or anyone else) are skipped.</p>
+      <button class="btn" type="submit">Start sync</button>
+      <a class="btn secondary" href="/forms/new">Cancel</a>
+    </div>
+  </form>
+  <script>
+    // Show the optional template box only when a question maps to a feedback
+    // column (the templatable NPS columns).
+    (function () {
+      var TEMPLATABLE = { doing_well: true, improve: true };
+      document.querySelectorAll('.target-select').forEach(function (sel) {
+        var tmpl = document.getElementById('template_' + sel.dataset.qid);
+        if (!tmpl) return;
+        var sync = function () { tmpl.style.display = TEMPLATABLE[sel.value] ? 'block' : 'none'; };
+        sel.addEventListener('change', sync);
+        sync();
+      });
+    })();
+  </script>
+</main>
+{{template "foot" .}}
+{{end}}
+
+{{define "page_audit"}}
+{{template "head" .}}
+{{template "nav" .}}
+<main>
+  <div class="card">
+    <h1>Audit log</h1>
+    <p class="muted">Who configured what, most recent first.</p>
+  </div>
+  <div class="card">
+    {{if .Logs}}
+    <table>
+      <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Job</th><th>Details</th></tr></thead>
+      <tbody>
+      {{range .Logs}}
+        <tr>
+          <td class="muted">{{.When}}</td>
+          <td>{{.Actor}}</td>
+          <td><span class="pill">{{.Action}}</span></td>
+          <td class="muted">{{.JobID}}</td>
+          <td>{{.Detail}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="muted">No audit entries yet.</p>
+    {{end}}
+  </div>
+</main>
+{{template "foot" .}}
+{{end}}
+
+{{define "page_message"}}
+{{template "head" .}}
+{{template "nav" .}}
+<main>
+  <div class="card">
+    <h1>{{.Heading}}</h1>
+    <p>{{.Message}}</p>
+    <a class="btn" href="/">Back to dashboard</a>
+  </div>
+</main>
+{{template "foot" .}}
+{{end}}

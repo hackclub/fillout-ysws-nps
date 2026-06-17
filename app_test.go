@@ -1,73 +1,261 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"iter"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hackclub/fillout-ysws-nps/airtable"
+	"github.com/hackclub/fillout-ysws-nps/fillout"
+	"github.com/hackclub/fillout-ysws-nps/internal/auth"
+	"github.com/hackclub/fillout-ysws-nps/internal/config"
+	"github.com/hackclub/fillout-ysws-nps/internal/db"
+	"github.com/hackclub/fillout-ysws-nps/internal/nps"
+	"github.com/hackclub/fillout-ysws-nps/openai"
 )
 
-func TestHandleHome(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+type fakeForms struct {
+	meta *fillout.FormMetadata
+	page *fillout.SubmissionsPage
+}
+
+func (f *fakeForms) GetForm(context.Context, string) (*fillout.FormMetadata, error) {
+	return f.meta, nil
+}
+
+func (f *fakeForms) GetSubmissions(context.Context, string, *fillout.GetSubmissionsParams) (*fillout.SubmissionsPage, error) {
+	return f.page, nil
+}
+
+func (f *fakeForms) AllSubmissions(context.Context, string, *fillout.GetSubmissionsParams) iter.Seq2[fillout.Submission, error] {
+	return func(func(fillout.Submission, error) bool) {}
+}
+
+// fakeAirtable serves YSWS program names for the dropdown.
+type fakeAirtable struct{ programs []string }
+
+func (f *fakeAirtable) ListRecords(_ context.Context, _ string, _ *airtable.ListOptions) ([]airtable.Record, error) {
+	recs := make([]airtable.Record, 0, len(f.programs))
+	for _, n := range f.programs {
+		recs = append(recs, airtable.Record{Fields: map[string]any{"Name": n}})
+	}
+	return recs, nil
+}
+
+func (f *fakeAirtable) CreateRecords(_ context.Context, _ string, _ []map[string]any, _ bool) ([]airtable.Record, error) {
+	return nil, nil
+}
+
+func stubOpenAIClient(t *testing.T, content string) *openai.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": content}}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	c, err := openai.NewClient("k", openai.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func newTestServer(t *testing.T, fc formClient, mapper *nps.Mapper) *Server {
+	t.Helper()
+	cfg := &config.Config{AirtableBaseID: "appTest", NPSTable: "NPS"}
+	a := auth.New(nil, []byte("secret"), func(string) bool { return true }, false)
+	at := &fakeAirtable{programs: []string{"Boba Drops", "Sprig"}}
+	s, err := NewServer(cfg, a, nil, fc, at, mapper, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	return s
+}
+
+func TestHealthz(t *testing.T) {
+	s := newTestServer(t, &fakeForms{}, nil)
 	rec := httptest.NewRecorder()
-
-	newRouter().ServeHTTP(rec, req)
-
-	res := rec.Result()
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("got status %d, want %d", res.StatusCode, http.StatusOK)
+	s.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "ok" {
+		t.Fatalf("healthz = %d %q", rec.Code, rec.Body.String())
 	}
+}
 
-	if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-		t.Errorf("got Content-Type %q, want text/html", ct)
+func TestAnonymousHomeShowsLogin(t *testing.T) {
+	s := newTestServer(t, &fakeForms{}, nil)
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
 	}
+	if !strings.Contains(rec.Body.String(), "Log in with Hack Club") {
+		t.Errorf("login page missing login button:\n%s", rec.Body.String())
+	}
+}
+
+func TestProtectedRouteRedirectsAnonymous(t *testing.T) {
+	s := newTestServer(t, &fakeForms{}, nil)
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/forms/new", nil))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/login" {
+		t.Errorf("Location = %q, want /login", loc)
+	}
+}
+
+func TestPreviewRendersMappingAndSamples(t *testing.T) {
+	fc := &fakeForms{
+		meta: &fillout.FormMetadata{
+			Name: "Boba NPS",
+			Questions: []fillout.QuestionDef{
+				{ID: "q_score", Name: "Recommend?", Type: fillout.QuestionOpinionScale},
+				{ID: "q_extra", Name: "Anything else?", Type: fillout.QuestionLongAnswer},
+			},
+		},
+		page: &fillout.SubmissionsPage{
+			Responses: []fillout.Submission{{
+				SubmissionID: "subZ",
+				Questions: []fillout.QuestionAnswer{
+					{ID: "q_score", Name: "Recommend?", Value: json.RawMessage(`9`)},
+					{ID: "q_extra", Name: "Anything else?", Value: json.RawMessage(`"keep it up"`)},
+				},
+			}},
+		},
+	}
+	content := `{"mappings":[
+		{"question_id":"q_score","target":"score","reasoning":"NPS rating","confidence":"high"},
+		{"question_id":"q_extra","target":"custom_fields","reasoning":"freeform","confidence":"medium"}
+	]}`
+	s := newTestServer(t, fc, nps.NewMapper(stubOpenAIClient(t, content)))
+
+	form := strings.NewReader("form_input=https://forms.fillout.com/t/abc123")
+	req := httptest.NewRequest(http.MethodPost, "/forms/preview", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	s.handlePreview(rec, req)
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "Fillout YSWS NPS") {
-		t.Errorf("home page body missing title; got:\n%s", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body:\n%s", rec.Code, body)
 	}
-	if !strings.Contains(body, "<!DOCTYPE html>") {
-		t.Errorf("home page body is not a full HTML document; got:\n%s", body)
+	for _, want := range []string{
+		"Boba NPS",            // form name
+		"Recommend?",          // question name in mapping table
+		"Start sync",          // CTA
+		nps.StampLine("subZ"), // dedup stamp present in rendered Custom Fields
+		"keep it up",          // catch-all answer rendered in preview
+		// mapping dropdown shows the full NPS column title, not the key "score":
+		"On a scale from 1-10, how likely are you to recommend this YSWS to a friend?",
+		"Boba Drops", // required YSWS program option in the searchable datalist
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("preview missing %q", want)
+		}
 	}
 }
 
-func TestHandleHomeUnknownPathReturns404(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/does-not-exist", nil)
-	rec := httptest.NewRecorder()
-
-	newRouter().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("got status %d, want %d", rec.Code, http.StatusNotFound)
+func TestStartDuplicateReactivatesExistingStoppedJob(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL not set; skipping db integration test")
 	}
-}
+	ctx := context.Background()
+	database, err := db.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(database.Close)
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
 
-func TestHandleHealthz(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	formID := "form-reactivate-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	existing, err := database.CreateJob(ctx, &db.SyncJob{
+		FilloutFormID:   formID,
+		FilloutFormName: "Existing Form",
+		AirtableBaseID:  "appTest",
+		AirtableTable:   "NPS",
+		Mapping:         json.RawMessage(`{"entries":[{"question_id":"q_score","target":"score"}]}`),
+		YSWSProgram:     "Boba Drops",
+		CreatedByEmail:  "original@hackclub.com",
+		Status:          db.StatusStopped,
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	fc := &fakeForms{meta: &fillout.FormMetadata{
+		Name:      "Existing Form",
+		Questions: []fillout.QuestionDef{{ID: "q_score", Name: "Recommend?", Type: fillout.QuestionOpinionScale}},
+	}}
+	at := &fakeAirtable{programs: []string{"Boba Drops"}}
+	manager := nps.NewManager(database, fc, at, time.Hour, nil)
+	t.Cleanup(manager.Shutdown)
+
+	s, err := NewServer(&config.Config{AirtableBaseID: "appTest", NPSTable: "NPS"}, auth.New(nil, []byte("secret"), func(string) bool { return true }, false), database, fc, at, nil, manager)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	form := strings.NewReader("form_id=" + formID + "&form_name=Existing+Form&ysws_program=Boba+Drops&target_q_score=score")
+	req := httptest.NewRequest(http.MethodPost, "/sync/start", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
-
-	newRouter().ServeHTTP(rec, req)
+	s.handleStart(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("got status %d, want %d", rec.Code, http.StatusOK)
+		t.Fatalf("status = %d; body:\n%s", rec.Code, rec.Body.String())
 	}
-	if got := strings.TrimSpace(rec.Body.String()); got != "ok" {
-		t.Errorf("got body %q, want %q", got, "ok")
+	got, err := database.GetJob(ctx, existing.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Status != db.StatusActive {
+		t.Errorf("status = %q, want %q", got.Status, db.StatusActive)
+	}
+}
+
+func TestParseFormID(t *testing.T) {
+	cases := map[string]string{
+		"abc123":                              "abc123",
+		"  abc123  ":                          "abc123",
+		"pYAa1Upz9uus":                        "pYAa1Upz9uus",
+		"https://forms.fillout.com/t/abc123":  "abc123",
+		"https://forms.fillout.com/t/abc123/": "abc123",
+		"https://build.fillout.com/editor/pYAa1Upz9uus/edit":            "pYAa1Upz9uus",
+		"https://build.fillout.com/editor/pYAa1Upz9uus":                 "pYAa1Upz9uus",
+		"https://build.fillout.com/editor/pYAa1Upz9uus/edit?tab=design": "pYAa1Upz9uus",
+		"https://forms.fillout.com/abc123":                              "abc123",
+		"":                                                              "",
+	}
+	for in, want := range cases {
+		if got := parseFormID(in); got != want {
+			t.Errorf("parseFormID(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
 func TestPortDefault(t *testing.T) {
 	t.Setenv("PORT", "")
 	if got := port(); got != "8080" {
-		t.Errorf("got default port %q, want %q", got, "8080")
+		t.Errorf("default port = %q, want 8080", got)
 	}
 }
 
 func TestPortFromEnv(t *testing.T) {
 	t.Setenv("PORT", "9999")
 	if got := port(); got != "9999" {
-		t.Errorf("got port %q, want %q", got, "9999")
+		t.Errorf("port = %q, want 9999", got)
 	}
 }

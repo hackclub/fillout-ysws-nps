@@ -8,8 +8,12 @@ WORKDIR /app
 RUN go install github.com/air-verse/air@v1.62.0
 
 # Warm the module cache first so dependency downloads are cached across
-# source-only rebuilds. go.sum is optional (the module has no deps yet).
+# source-only rebuilds. The root module uses local `replace` directives for the
+# fillout and airtable sub-modules, so their go.mod files must be present for
+# `go mod download` to resolve the module graph.
 COPY go.mod go.sum* ./
+COPY fillout/go.mod fillout/go.sum ./fillout/
+COPY airtable/go.mod ./airtable/
 RUN go mod download
 
 # Copy the source so the image can build standalone; in dev it's shadowed by
