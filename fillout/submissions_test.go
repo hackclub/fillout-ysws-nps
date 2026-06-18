@@ -233,7 +233,10 @@ func TestCreateSubmissionsValidation(t *testing.T) {
 }
 
 func TestAllSubmissionsPaginates(t *testing.T) {
-	// 3 total submissions, page size 2 -> two pages.
+	// 3 total submissions, page size 2 -> two pages. The live API reports
+	// totalResponses/pageCount PER PAGE (= the number of rows on that page), not
+	// as grand totals, so pagination must continue until a page returns fewer
+	// rows than the requested limit. The mock mirrors that behavior.
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		if q.Get("limit") != "2" {
@@ -243,17 +246,19 @@ func TestAllSubmissionsPaginates(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch offset {
 		case "", "0":
+			// Full page (rows == limit): more may follow.
 			w.Write([]byte(`{"responses":[
 				{"submissionId":"s1","questions":[]},
 				{"submissionId":"s2","questions":[]}
-			],"totalResponses":3,"pageCount":2}`))
+			],"totalResponses":2,"pageCount":1}`))
 		case "2":
+			// Short page (rows < limit): the end.
 			w.Write([]byte(`{"responses":[
 				{"submissionId":"s3","questions":[]}
-			],"totalResponses":3,"pageCount":2}`))
+			],"totalResponses":1,"pageCount":1}`))
 		default:
 			t.Errorf("unexpected offset %q", offset)
-			w.Write([]byte(`{"responses":[],"totalResponses":3,"pageCount":2}`))
+			w.Write([]byte(`{"responses":[],"totalResponses":0,"pageCount":0}`))
 		}
 	})
 
@@ -272,6 +277,49 @@ func TestAllSubmissionsPaginates(t *testing.T) {
 		if ids[i] != want[i] {
 			t.Errorf("ids[%d] = %q, want %q", i, ids[i], want[i])
 		}
+	}
+}
+
+func TestAllSubmissionsPagesUntilShortPage(t *testing.T) {
+	// When the total is an exact multiple of the page size, every page is full,
+	// so iteration only ends on the trailing empty page. This guards against the
+	// regression where the per-page totalResponses was used to stop early (which
+	// truncated the sync to a single page against the real API).
+	var calls int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("offset") {
+		case "", "0":
+			w.Write([]byte(`{"responses":[{"submissionId":"a","questions":[]},{"submissionId":"b","questions":[]}],"totalResponses":2,"pageCount":1}`))
+		case "2":
+			w.Write([]byte(`{"responses":[{"submissionId":"c","questions":[]},{"submissionId":"d","questions":[]}],"totalResponses":2,"pageCount":1}`))
+		case "4":
+			w.Write([]byte(`{"responses":[],"totalResponses":0,"pageCount":0}`))
+		default:
+			t.Errorf("unexpected offset %q", r.URL.Query().Get("offset"))
+			w.Write([]byte(`{"responses":[],"totalResponses":0,"pageCount":0}`))
+		}
+	})
+
+	var ids []string
+	for sub, err := range c.AllSubmissions(context.Background(), "form1", &GetSubmissionsParams{Limit: 2}) {
+		if err != nil {
+			t.Fatalf("iteration error: %v", err)
+		}
+		ids = append(ids, sub.SubmissionID)
+	}
+	want := []string{"a", "b", "c", "d"}
+	if len(ids) != len(want) {
+		t.Fatalf("ids = %v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Errorf("ids[%d] = %q, want %q", i, ids[i], want[i])
+		}
+	}
+	if calls != 3 {
+		t.Errorf("server calls = %d, want 3 (two full pages + one empty)", calls)
 	}
 }
 

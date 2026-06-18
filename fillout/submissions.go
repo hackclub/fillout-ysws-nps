@@ -94,9 +94,14 @@ func (p *GetSubmissionsParams) values() url.Values {
 type SubmissionsPage struct {
 	// Responses are the submissions on this page.
 	Responses []Submission `json:"responses"`
-	// TotalResponses is the total number of submissions matching the query.
+	// TotalResponses is, despite its name, reported by the live API as the number
+	// of responses on THIS page (i.e. min(limit, remaining)), not the grand total
+	// across all pages. Do not use it to compute totals or to drive pagination;
+	// page until a page returns fewer rows than the requested limit (AllSubmissions
+	// does this).
 	TotalResponses int `json:"totalResponses"`
-	// PageCount is the total number of pages given the requested limit.
+	// PageCount is likewise reported per-page (typically 1) rather than as the
+	// total number of pages, and is unreliable for the same reason.
 	PageCount int `json:"pageCount"`
 }
 
@@ -212,10 +217,15 @@ func (c *Client) AllSubmissions(ctx context.Context, formID string, params *GetS
 					return
 				}
 			}
-			p.Offset += len(page.Responses)
-			if len(page.Responses) == 0 || p.Offset >= page.TotalResponses {
+			// Stop on a short page. The API reports totalResponses/pageCount
+			// per-page (= rows on this page), not as grand totals, so they cannot
+			// drive pagination; a page smaller than the requested limit means we
+			// have reached the end. When the total is an exact multiple of the
+			// limit this costs one extra empty request, which also terminates here.
+			if len(page.Responses) < p.Limit {
 				return
 			}
+			p.Offset += len(page.Responses)
 		}
 	}
 }
