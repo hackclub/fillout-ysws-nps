@@ -131,11 +131,14 @@
     .flow-node .role { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em;
       text-transform: uppercase; color: var(--muted); margin-bottom: 0.25rem; }
     .flow-node .title { font-weight: 700; color: var(--dark); word-break: break-word; }
-    .flow-node .sub { color: var(--muted); font-size: 0.82rem; margin-top: 0.15rem; font-family: var(--mono); word-break: break-all; }
+    .flow-node .sub { color: var(--muted); font-size: 0.82rem; margin-top: 0.15rem; font-family: var(--mono); overflow-wrap: anywhere; }
     .flow-arrow { display: flex; align-items: center; justify-content: center; padding: 0 0.85rem; color: var(--orange); }
     .flow-arrow svg { width: 30px; height: 18px; display: block; }
     @media (max-width: 640px) {
       .flow { flex-direction: column; }
+      /* In a column the flex-basis would become the node's height; reset it so
+         nodes size to their content instead of stretching to 240px tall. */
+      .flow-node { flex: 1 1 auto; }
       .flow-arrow { padding: 0.45rem 0; transform: rotate(90deg); }
     }
 
@@ -371,7 +374,7 @@
     {{end}}
   {{else}}
   <div class="card" style="text-align:center; padding:2.5rem 1.6rem">
-    <div class="flow" style="max-width:32rem;margin:0 auto 1.25rem">
+    <div class="flow" style="max-width:38rem;margin:0 auto 1.25rem">
       <div class="flow-node"><div class="role">Source</div><div class="title">A Fillout form</div></div>
       {{template "flow_arrow"}}
       <div class="flow-node"><div class="role">Destination</div><div class="title">NPS table</div></div>
