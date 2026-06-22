@@ -12,7 +12,10 @@ import (
 // dedupQueryChunk is how many submission stamps are checked per Airtable query.
 const dedupQueryChunk = 25
 
-// stampIDPattern extracts the submission ID from a Custom Fields stamp line.
+// stampIDPattern extracts the submission ID from a Custom Fields stamp line. The
+// stamp is stored italicized ("_Fillout Submission: <id>_"), so the capture can
+// include the wrapper's trailing underscore; callers strip it to recover the
+// bare submission ID.
 var stampIDPattern = regexp.MustCompile(regexp.QuoteMeta(stampPrefix) + `\s*(\S+)`)
 
 // AirtableAPI is the subset of the Airtable client the sync needs. The real
@@ -55,8 +58,14 @@ func FindStampedRecords(ctx context.Context, at AirtableAPI, table string, submi
 		}
 		for _, rec := range records {
 			text, _ := rec.Fields[FieldCustomFields].(string)
-			if m := stampIDPattern.FindStringSubmatch(text); m != nil && want[m[1]] {
-				found[m[1]] = rec.ID
+			m := stampIDPattern.FindStringSubmatch(text)
+			if m == nil {
+				continue
+			}
+			// Strip the italic wrapper's underscores from the captured token to
+			// recover the bare submission ID (see stampIDPattern).
+			if id := strings.Trim(m[1], "_"); want[id] {
+				found[id] = rec.ID
 			}
 		}
 	}
