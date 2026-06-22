@@ -121,7 +121,11 @@ func (f *fakeAirtable) ListRecords(_ context.Context, _ string, opts *airtable.L
 	var out []airtable.Record
 	for subID, recID := range f.stamped {
 		if opts != nil && strings.Contains(opts.FilterByFormula, StampLine(subID)) {
-			out = append(out, airtable.Record{ID: recID, Fields: map[string]any{FieldCustomFields: StampLine(subID)}})
+			// Store the stamp exactly as the transform writes it: the last block of
+			// the Custom Fields rich text, italicized ("_<stamp>_"). The parser must
+			// recover the bare submission ID from this real-world format.
+			customFields := "**Anything else?**\nthanks\n\n_" + StampLine(subID) + "_"
+			out = append(out, airtable.Record{ID: recID, Fields: map[string]any{FieldCustomFields: customFields}})
 		}
 	}
 	return out, nil
