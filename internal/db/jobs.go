@@ -169,6 +169,19 @@ func (db *DB) UpdateJobProgress(ctx context.Context, id int64, cursor *time.Time
 	return nil
 }
 
+// DeleteJob removes a sync job. Its synced_submissions ledger rows are removed
+// too via ON DELETE CASCADE. Returns ErrNotFound if no job matched.
+func (db *DB) DeleteJob(ctx context.Context, id int64) error {
+	tag, err := db.pool.Exec(ctx, `DELETE FROM sync_jobs WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("db: deleting job: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetJobStatus changes a job's status.
 func (db *DB) SetJobStatus(ctx context.Context, id int64, status string) error {
 	tag, err := db.pool.Exec(ctx,

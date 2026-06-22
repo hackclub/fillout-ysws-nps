@@ -296,3 +296,69 @@ func TestStatsAndProgress(t *testing.T) {
 		t.Error("LastPolledAt not set")
 	}
 }
+
+func TestCreatedRecordIDs(t *testing.T) {
+	database := testDB(t)
+	ctx := context.Background()
+	job, err := database.CreateJob(ctx, sampleJob())
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	recs := []SubmissionRecord{
+		{SyncJobID: job.ID, FilloutFormID: job.FilloutFormID, FilloutSubmissionID: "s1", AirtableRecordID: "recA", Outcome: OutcomeCreated},
+		{SyncJobID: job.ID, FilloutFormID: job.FilloutFormID, FilloutSubmissionID: "s2", AirtableRecordID: "recB", Outcome: OutcomeCreated},
+		// Skipped-existing rows belong to someone else's record: must be excluded.
+		{SyncJobID: job.ID, FilloutFormID: job.FilloutFormID, FilloutSubmissionID: "s3", AirtableRecordID: "recX", Outcome: OutcomeSkippedExisting},
+		// A created row without a record ID (e.g. an error path) is excluded too.
+		{SyncJobID: job.ID, FilloutFormID: job.FilloutFormID, FilloutSubmissionID: "s4", AirtableRecordID: "", Outcome: OutcomeCreated},
+	}
+	if _, err := database.RecordSubmissions(ctx, recs); err != nil {
+		t.Fatalf("RecordSubmissions: %v", err)
+	}
+
+	ids, err := database.CreatedRecordIDs(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("CreatedRecordIDs: %v", err)
+	}
+	if len(ids) != 2 || ids[0] != "recA" || ids[1] != "recB" {
+		t.Errorf("CreatedRecordIDs = %v, want [recA recB]", ids)
+	}
+}
+
+func TestDeleteJob_CascadesLedger(t *testing.T) {
+	database := testDB(t)
+	ctx := context.Background()
+	job, err := database.CreateJob(ctx, sampleJob())
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if _, err := database.RecordSubmission(ctx, SubmissionRecord{
+		SyncJobID: job.ID, FilloutFormID: job.FilloutFormID, FilloutSubmissionID: "s1",
+		AirtableRecordID: "recA", Outcome: OutcomeCreated,
+	}); err != nil {
+		t.Fatalf("RecordSubmission: %v", err)
+	}
+
+	if err := database.DeleteJob(ctx, job.ID); err != nil {
+		t.Fatalf("DeleteJob: %v", err)
+	}
+	if _, err := database.GetJob(ctx, job.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetJob after delete: err = %v, want ErrNotFound", err)
+	}
+
+	// The ledger rows must be gone via ON DELETE CASCADE.
+	var count int
+	if err := database.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM synced_submissions WHERE sync_job_id = $1`, job.ID).Scan(&count); err != nil {
+		t.Fatalf("counting ledger rows: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("ledger rows after delete = %d, want 0", count)
+	}
+
+	// Deleting a job that no longer exists reports ErrNotFound.
+	if err := database.DeleteJob(ctx, job.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("DeleteJob (missing): err = %v, want ErrNotFound", err)
+	}
+}

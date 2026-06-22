@@ -43,15 +43,50 @@
     }
     .btn.secondary { background: rgba(255,255,255,0.2); color: #fff; }
     .btn.danger { background: rgba(0,0,0,0.25); color: #fff; }
+    .btn.ghost { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.4); }
+    /* Per-job action buttons stack neatly in the dashboard's last column. */
+    .actions { display: flex; flex-direction: column; gap: 0.4rem; align-items: stretch; }
+    .actions .btn { margin: 0; text-align: center; }
+    .actions-row { margin-top: 1rem; display: flex; gap: 0.6rem; flex-wrap: wrap; }
+    /* Checkbox row on the remove-confirm page: keep the box its natural size
+       (the global input rule stretches inputs to 100%) beside its label. */
+    label.checkbox { display: flex; gap: 0.6rem; align-items: flex-start; font-weight: 400; margin: 1rem 0 0; }
+    label.checkbox input { width: auto; margin-top: 0.25rem; flex: none; }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid rgba(255,255,255,0.18); vertical-align: top; }
     th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.85; }
     code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    pre.richtext { white-space: pre-wrap; background: rgba(0,0,0,0.22); padding: 0.6rem 0.7rem; border-radius: 8px; margin: 0.3rem 0 0; font-size: 0.85rem; }
+    /* Rich-text preview cells mirror how Airtable renders a long-text field:
+       a light cell with formatted bold/italic text and paragraph spacing. */
+    .richtext { background: #fff; color: #1f2430; border-radius: 8px; padding: 0.55rem 0.75rem; font-size: 0.9rem; line-height: 1.5; }
+    .richtext p { margin: 0 0 0.55rem; }
+    .richtext p:last-child { margin-bottom: 0; }
+    .richtext strong { font-weight: 700; }
+    .richtext em { font-style: italic; }
     .pill { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.75rem; background: rgba(255,255,255,0.22); }
     .pill.active { background: #2ecc71; color: #062b15; }
     .pill.stopped { background: rgba(0,0,0,0.3); }
     .muted { opacity: 0.8; font-size: 0.85rem; }
+    /* Field-mapping rows: question + reasoning side by side, with the dropdown
+       and optional template spanning the full width below so long NPS column
+       labels never get clipped. */
+    .mapping-list { display: flex; flex-direction: column; }
+    .mapping {
+      display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+      column-gap: 1.5rem; row-gap: 0.6rem;
+      padding: 1.1rem 0; border-bottom: 1px solid rgba(255,255,255,0.18);
+    }
+    .mapping:first-child { padding-top: 0.25rem; }
+    .mapping:last-child { border-bottom: none; padding-bottom: 0; }
+    .mapping .q { font-weight: 600; line-height: 1.35; }
+    .mapping .q .meta { font-weight: 400; margin-top: 0.2rem; }
+    .mapping .why { align-self: start; }
+    .mapping .control { grid-column: 1 / -1; }
+    .mapping .control-label {
+      display: block; margin: 0 0 0.3rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.75rem; opacity: 0.85;
+    }
+    @media (max-width: 640px) { .mapping { grid-template-columns: 1fr; } }
     .flash { background: rgba(46,204,113,0.25); border: 1px solid rgba(46,204,113,0.5); padding: 0.7rem 0.9rem; border-radius: 8px; margin-bottom: 1rem; }
     .error { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.4); padding: 0.7rem 0.9rem; border-radius: 8px; margin-bottom: 1rem; }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
@@ -123,17 +158,20 @@
           <td>{{.Created}} created<br><span class="muted">{{.Skipped}} dupes skipped</span>{{if .Errored}}<br><span class="muted">{{.Errored}} errors</span>{{end}}</td>
           <td class="muted">{{.LastPolled}}</td>
           <td>
-            {{if .Running}}
-            <form method="post" action="/sync/stop" style="margin:0">
-              <input type="hidden" name="job_id" value="{{.ID}}">
-              <button class="btn danger" type="submit">Stop</button>
-            </form>
-            {{else}}
-            <form method="post" action="/sync/resume" style="margin:0">
-              <input type="hidden" name="job_id" value="{{.ID}}">
-              <button class="btn secondary" type="submit">Resume</button>
-            </form>
-            {{end}}
+            <div class="actions">
+              {{if .Running}}
+              <form method="post" action="/sync/stop" style="margin:0">
+                <input type="hidden" name="job_id" value="{{.ID}}">
+                <button class="btn danger" type="submit">Stop</button>
+              </form>
+              {{else}}
+              <form method="post" action="/sync/resume" style="margin:0">
+                <input type="hidden" name="job_id" value="{{.ID}}">
+                <button class="btn secondary" type="submit">Resume</button>
+              </form>
+              {{end}}
+              <a class="btn ghost" href="/sync/remove?job_id={{.ID}}">Remove…</a>
+            </div>
           </td>
         </tr>
       {{end}}
@@ -143,6 +181,33 @@
   {{else}}
   <div class="card"><p class="muted">No sync jobs yet.</p></div>
   {{end}}
+</main>
+{{template "foot" .}}
+{{end}}
+
+{{define "page_remove_confirm"}}
+{{template "head" .}}
+{{template "nav" .}}
+<main>
+  <div class="card">
+    <h1>Remove sync</h1>
+    <p>This stops syncing <strong>{{.FormName}}</strong> <span class="muted">({{.FormID}})</span> into <strong>{{.BaseID}} / {{.Table}}</strong> and deletes the sync job. You can always set it up again later.</p>
+    <form method="post" action="/sync/remove">
+      <input type="hidden" name="job_id" value="{{.JobID}}">
+      {{if .Created}}
+      <label class="checkbox">
+        <input type="checkbox" name="delete_records" value="1">
+        <span>Also delete the <strong>{{.Created}}</strong> Airtable record{{if ne .Created 1}}s{{end}} this sync created in {{.BaseID}} / {{.Table}}. <strong>This permanently deletes them and can't be undone.</strong> Records added by anyone else (skipped as duplicates) are left untouched.</span>
+      </label>
+      {{else}}
+      <p class="muted">This sync hasn't created any Airtable records, so there's nothing to delete there.</p>
+      {{end}}
+      <div class="actions-row">
+        <button class="btn danger" type="submit">Remove sync</button>
+        <a class="btn secondary" href="/">Cancel</a>
+      </div>
+    </form>
+  </div>
 </main>
 {{template "foot" .}}
 {{end}}
@@ -197,27 +262,24 @@
     <div class="card">
       <h2>Field mapping</h2>
       <p class="muted">Each form question feeds the NPS column chosen below. “Custom Fields (catch-all)” keeps the answer verbatim; “Ignore” drops it. For the two feedback columns you can add an optional template to make the text read well — use <code>{{"{{question}}"}}</code> and <code>{{"{{answer}}"}}</code> (leave blank to copy the answer directly).</p>
-      <table>
-        <thead><tr><th>Form question</th><th>Type</th><th>NPS column it fills</th><th>Why</th></tr></thead>
-        <tbody>
+      <div class="mapping-list">
         {{range .Mappings}}
-          <tr>
-            <td class="field-name">{{.QuestionName}}<br><span class="muted">{{.QuestionID}}</span></td>
-            <td class="muted">{{.QuestionType}}</td>
-            <td>
-              <select name="target_{{.QuestionID}}" class="target-select" data-qid="{{.QuestionID}}">
-                {{$sel := .Target}}
-                {{range $.Targets}}
-                  <option value="{{.Value}}" {{if eq .Value $sel}}selected{{end}}>{{.Label}}</option>
-                {{end}}
-              </select>
-              <input type="text" class="template-input" id="template_{{.QuestionID}}" name="template_{{.QuestionID}}" value="{{.Template}}" placeholder="optional template, e.g. **{{"{{question}}"}}** {{"{{answer}}"}}" autocomplete="off" style="margin-top:0.4rem; display:none">
-            </td>
-            <td class="muted">{{if .Confidence}}<span class="pill">{{.Confidence}}</span> {{end}}{{.Reasoning}}</td>
-          </tr>
+        <div class="mapping">
+          <div class="q">{{.QuestionName}}<div class="meta muted">{{.QuestionType}} · {{.QuestionID}}</div></div>
+          <div class="why muted">{{if .Confidence}}<span class="pill">{{.Confidence}}</span> {{end}}{{.Reasoning}}</div>
+          <div class="control">
+            <label class="control-label" for="target_{{.QuestionID}}">NPS column it fills</label>
+            <select id="target_{{.QuestionID}}" name="target_{{.QuestionID}}" class="target-select" data-qid="{{.QuestionID}}">
+              {{$sel := .Target}}
+              {{range $.Targets}}
+                <option value="{{.Value}}" {{if eq .Value $sel}}selected{{end}}>{{.Label}}</option>
+              {{end}}
+            </select>
+            <input type="text" class="template-input" id="template_{{.QuestionID}}" name="template_{{.QuestionID}}" value="{{.Template}}" placeholder="optional template, e.g. **{{"{{question}}"}}** {{"{{answer}}"}}" autocomplete="off" style="margin-top:0.5rem; display:none">
+          </div>
+        </div>
         {{end}}
-        </tbody>
-      </table>
+      </div>
     </div>
 
     <div class="card">
@@ -231,7 +293,7 @@
             {{range .Fields}}
               <tr>
                 <td class="field-name" style="width:30%">{{.Name}}</td>
-                <td>{{if .Pre}}<pre class="richtext">{{.Value}}</pre>{{else}}{{.Value}}{{end}}</td>
+                <td>{{if .Rich}}<div class="richtext">{{.Value}}</div>{{else}}{{.Value}}{{end}}</td>
               </tr>
             {{end}}
             </tbody>

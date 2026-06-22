@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"iter"
 	"net/http"
 	"net/http/httptest"
@@ -38,8 +39,16 @@ func (f *fakeForms) AllSubmissions(context.Context, string, *fillout.GetSubmissi
 	return func(func(fillout.Submission, error) bool) {}
 }
 
-// fakeAirtable serves YSWS program names for the dropdown.
-type fakeAirtable struct{ programs []string }
+// fakeAirtable serves YSWS program names for the dropdown and records any
+// delete calls so tests can assert on them.
+type fakeAirtable struct {
+	programs []string
+
+	deleteErr    error    // returned by DeleteRecords when set
+	deletedTable string   // table passed to the last DeleteRecords call
+	deletedIDs   []string // IDs passed to the last DeleteRecords call
+	deleteCalls  int      // number of DeleteRecords calls
+}
 
 func (f *fakeAirtable) ListRecords(_ context.Context, _ string, _ *airtable.ListOptions) ([]airtable.Record, error) {
 	recs := make([]airtable.Record, 0, len(f.programs))
@@ -51,6 +60,16 @@ func (f *fakeAirtable) ListRecords(_ context.Context, _ string, _ *airtable.List
 
 func (f *fakeAirtable) CreateRecords(_ context.Context, _ string, _ []map[string]any, _ bool) ([]airtable.Record, error) {
 	return nil, nil
+}
+
+func (f *fakeAirtable) DeleteRecords(_ context.Context, table string, ids []string) ([]string, error) {
+	f.deleteCalls++
+	f.deletedTable = table
+	f.deletedIDs = ids
+	if f.deleteErr != nil {
+		return nil, f.deleteErr
+	}
+	return ids, nil
 }
 
 func stubOpenAIClient(t *testing.T, content string) *openai.Client {
@@ -257,5 +276,115 @@ func TestPortFromEnv(t *testing.T) {
 	t.Setenv("PORT", "9999")
 	if got := port(); got != "9999" {
 		t.Errorf("port = %q, want 9999", got)
+	}
+}
+
+// dbBackedServer builds a Server wired to a real Postgres (skipping when
+// DATABASE_URL is unset) plus a manager and a fakeAirtable, for handler tests
+// that touch the store.
+func dbBackedServer(t *testing.T) (*Server, *db.DB, *fakeAirtable) {
+	t.Helper()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set; skipping db integration test")
+	}
+	ctx := context.Background()
+	database, err := db.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(database.Close)
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	fc := &fakeForms{}
+	at := &fakeAirtable{}
+	manager := nps.NewManager(database, fc, at, time.Hour, nil)
+	t.Cleanup(manager.Shutdown)
+	cfg := &config.Config{AirtableBaseID: "appTest", NPSTable: "NPS"}
+	s, err := NewServer(cfg, auth.New(nil, []byte("secret"), func(string) bool { return true }, false), database, fc, at, nil, manager)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	return s, database, at
+}
+
+func TestRemoveJobDeletesOnlyItsOwnCreatedRecords(t *testing.T) {
+	s, database, at := dbBackedServer(t)
+	ctx := context.Background()
+
+	formID := "form-remove-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	job, err := database.CreateJob(ctx, &db.SyncJob{
+		FilloutFormID: formID, FilloutFormName: "Removable", AirtableBaseID: "appTest",
+		AirtableTable: "NPS", CreatedByEmail: "z@hackclub.com", Status: db.StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if _, err := database.RecordSubmissions(ctx, []db.SubmissionRecord{
+		{SyncJobID: job.ID, FilloutFormID: formID, FilloutSubmissionID: "s1", AirtableRecordID: "recA", Outcome: db.OutcomeCreated},
+		{SyncJobID: job.ID, FilloutFormID: formID, FilloutSubmissionID: "s2", AirtableRecordID: "recB", Outcome: db.OutcomeCreated},
+		// Skipped (someone else's record) — must NOT be deleted.
+		{SyncJobID: job.ID, FilloutFormID: formID, FilloutSubmissionID: "s3", AirtableRecordID: "recX", Outcome: db.OutcomeSkippedExisting},
+	}); err != nil {
+		t.Fatalf("RecordSubmissions: %v", err)
+	}
+
+	form := strings.NewReader("job_id=" + strconv.FormatInt(job.ID, 10) + "&delete_records=1")
+	req := httptest.NewRequest(http.MethodPost, "/sync/remove", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	s.handleRemove(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d; body:\n%s", rec.Code, rec.Body.String())
+	}
+	if _, err := database.GetJob(ctx, job.ID); !errors.Is(err, db.ErrNotFound) {
+		t.Errorf("GetJob after remove: err = %v, want ErrNotFound", err)
+	}
+	if at.deleteCalls != 1 {
+		t.Fatalf("DeleteRecords calls = %d, want 1", at.deleteCalls)
+	}
+	if at.deletedTable != "NPS" {
+		t.Errorf("deleted table = %q, want NPS", at.deletedTable)
+	}
+	if len(at.deletedIDs) != 2 || at.deletedIDs[0] != "recA" || at.deletedIDs[1] != "recB" {
+		t.Errorf("deleted IDs = %v, want [recA recB] (skipped recX must be excluded)", at.deletedIDs)
+	}
+}
+
+func TestRemoveJobKeepsRecordsByDefault(t *testing.T) {
+	s, database, at := dbBackedServer(t)
+	ctx := context.Background()
+
+	formID := "form-keep-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	job, err := database.CreateJob(ctx, &db.SyncJob{
+		FilloutFormID: formID, FilloutFormName: "Keep", AirtableBaseID: "appTest",
+		AirtableTable: "NPS", CreatedByEmail: "z@hackclub.com", Status: db.StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if _, err := database.RecordSubmission(ctx, db.SubmissionRecord{
+		SyncJobID: job.ID, FilloutFormID: formID, FilloutSubmissionID: "s1", AirtableRecordID: "recA", Outcome: db.OutcomeCreated,
+	}); err != nil {
+		t.Fatalf("RecordSubmission: %v", err)
+	}
+
+	// No delete_records field -> records are kept.
+	form := strings.NewReader("job_id=" + strconv.FormatInt(job.ID, 10))
+	req := httptest.NewRequest(http.MethodPost, "/sync/remove", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	s.handleRemove(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d; body:\n%s", rec.Code, rec.Body.String())
+	}
+	if _, err := database.GetJob(ctx, job.ID); !errors.Is(err, db.ErrNotFound) {
+		t.Errorf("GetJob after remove: err = %v, want ErrNotFound", err)
+	}
+	if at.deleteCalls != 0 {
+		t.Errorf("DeleteRecords calls = %d, want 0 (records kept)", at.deleteCalls)
 	}
 }
