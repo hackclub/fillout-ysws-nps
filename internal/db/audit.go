@@ -11,6 +11,7 @@ const (
 	ActionSyncCreated          = "sync.created"
 	ActionSyncStopped          = "sync.stopped"
 	ActionSyncResumed          = "sync.resumed"
+	ActionSyncRemoved          = "sync.removed"
 	ActionSyncDuplicateBlocked = "sync.duplicate_blocked"
 )
 

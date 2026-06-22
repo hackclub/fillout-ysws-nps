@@ -31,20 +31,28 @@ type formClient interface {
 	GetSubmissions(ctx context.Context, formID string, params *fillout.GetSubmissionsParams) (*fillout.SubmissionsPage, error)
 }
 
+// airtableClient is the subset of *airtable.Client the web layer uses: what the
+// sync needs (nps.AirtableAPI: list + create) plus record deletion, used when a
+// sync is removed and the user opts to delete the records it created.
+type airtableClient interface {
+	nps.AirtableAPI
+	DeleteRecords(ctx context.Context, table string, recordIDs []string) ([]string, error)
+}
+
 // Server holds the application's HTTP dependencies.
 type Server struct {
 	cfg      *config.Config
 	auth     *auth.Authenticator
 	store    *db.DB
 	fillout  formClient
-	airtable nps.AirtableAPI
+	airtable airtableClient
 	mapper   *nps.Mapper
 	manager  *nps.Manager
 	tmpl     *template.Template
 }
 
 // NewServer constructs a Server and parses templates.
-func NewServer(cfg *config.Config, a *auth.Authenticator, store *db.DB, fc formClient, at nps.AirtableAPI, mapper *nps.Mapper, manager *nps.Manager) (*Server, error) {
+func NewServer(cfg *config.Config, a *auth.Authenticator, store *db.DB, fc formClient, at airtableClient, mapper *nps.Mapper, manager *nps.Manager) (*Server, error) {
 	tmpl, err := template.ParseFS(templatesFS, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parsing templates: %w", err)
@@ -74,6 +82,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /sync/start", s.auth.RequireUser(http.HandlerFunc(s.handleStart)))
 	mux.Handle("POST /sync/stop", s.auth.RequireUser(http.HandlerFunc(s.handleStop)))
 	mux.Handle("POST /sync/resume", s.auth.RequireUser(http.HandlerFunc(s.handleResume)))
+	mux.Handle("GET /sync/remove", s.auth.RequireUser(http.HandlerFunc(s.handleRemoveConfirm)))
+	mux.Handle("POST /sync/remove", s.auth.RequireUser(http.HandlerFunc(s.handleRemove)))
 	mux.Handle("GET /audit", s.auth.RequireUser(http.HandlerFunc(s.handleAudit)))
 	return mux
 }
@@ -171,8 +181,10 @@ type sampleView struct {
 
 type fieldKV struct {
 	Name  string
-	Value string
-	Pre   bool
+	Value template.HTML
+	// Rich marks a field rendered as Airtable-style formatted rich text (the
+	// feedback columns and the Custom Fields catch-all) rather than plain text.
+	Rich bool
 }
 
 // --- handlers ---
@@ -438,6 +450,111 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/?flash="+url.QueryEscape("Sync resumed"), http.StatusFound)
 }
 
+type removeView struct {
+	baseView
+	JobID    int64
+	FormName string
+	FormID   string
+	BaseID   string
+	Table    string
+	// Created is how many Airtable records this sync created (and could delete).
+	Created int
+}
+
+// handleRemoveConfirm shows the confirmation page for removing a sync, including
+// how many Airtable records it created so the user can choose to delete them.
+func (s *Server) handleRemoveConfirm(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseJobID(r.URL.Query().Get("job_id"))
+	if !ok {
+		http.Error(w, "invalid job id", http.StatusBadRequest)
+		return
+	}
+	job, err := s.store.GetJob(r.Context(), id)
+	if errors.Is(err, db.ErrNotFound) {
+		http.Redirect(w, r, "/?flash="+url.QueryEscape("That sync was already removed."), http.StatusFound)
+		return
+	}
+	if err != nil {
+		s.serverError(w, "loading job", err)
+		return
+	}
+	stats, err := s.store.StatsForJob(r.Context(), id)
+	if err != nil {
+		s.serverError(w, "loading job stats", err)
+		return
+	}
+	s.render(w, "page_remove_confirm", removeView{
+		baseView: s.base(r, "Remove sync"),
+		JobID:    job.ID,
+		FormName: orDefault(job.FilloutFormName, job.FilloutFormID),
+		FormID:   job.FilloutFormID,
+		BaseID:   job.AirtableBaseID,
+		Table:    job.AirtableTable,
+		Created:  stats.Created,
+	})
+}
+
+// handleRemove stops a job's poller and deletes the job (its ledger rows cascade
+// away). When "delete_records" is set it also deletes, best-effort, the Airtable
+// records the sync created — captured from the ledger before the job is deleted.
+// Removing the sync always succeeds; record deletion is reported in the flash.
+func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseJobID(r.FormValue("job_id"))
+	if !ok {
+		http.Error(w, "invalid job id", http.StatusBadRequest)
+		return
+	}
+	job, err := s.store.GetJob(r.Context(), id)
+	if errors.Is(err, db.ErrNotFound) {
+		http.Redirect(w, r, "/?flash="+url.QueryEscape("That sync was already removed."), http.StatusFound)
+		return
+	}
+	if err != nil {
+		s.serverError(w, "loading job", err)
+		return
+	}
+	deleteRecords := r.FormValue("delete_records") != ""
+
+	// Capture the record IDs while the ledger still exists (DeleteJob cascades it).
+	var recordIDs []string
+	if deleteRecords {
+		recordIDs, err = s.store.CreatedRecordIDs(r.Context(), id)
+		if err != nil {
+			s.serverError(w, "loading created records", err)
+			return
+		}
+	}
+
+	s.manager.StopJob(id)
+	if err := s.store.DeleteJob(r.Context(), id); err != nil {
+		s.serverError(w, "removing job", err)
+		return
+	}
+
+	user, _ := auth.UserFromContext(r.Context())
+	formName := orDefault(job.FilloutFormName, job.FilloutFormID)
+
+	// Job is gone; record deletion is best-effort and reported, not fatal.
+	if deleteRecords && len(recordIDs) > 0 {
+		deleted, delErr := s.airtable.DeleteRecords(r.Context(), job.AirtableTable, recordIDs)
+		if delErr != nil {
+			log.Printf("removing job %d: deleting airtable records: %v", id, delErr)
+			s.audit(r, db.AuditEntry{ActorEmail: user.Email, Action: db.ActionSyncRemoved, SyncJobID: &id, FormID: job.FilloutFormID,
+				Details: fmt.Sprintf("Removed sync for %q; deleted %d of %d Airtable records before an error: %v", formName, len(deleted), len(recordIDs), delErr)})
+			http.Redirect(w, r, "/?flash="+url.QueryEscape(fmt.Sprintf("Removed sync for %s. Deleted %d of %d Airtable records; some could not be deleted — check Airtable.", formName, len(deleted), len(recordIDs))), http.StatusFound)
+			return
+		}
+		s.audit(r, db.AuditEntry{ActorEmail: user.Email, Action: db.ActionSyncRemoved, SyncJobID: &id, FormID: job.FilloutFormID,
+			Details: fmt.Sprintf("Removed sync for %q and deleted %d Airtable record(s) it created.", formName, len(deleted))})
+		http.Redirect(w, r, "/?flash="+url.QueryEscape(fmt.Sprintf("Removed sync for %s and deleted %d Airtable record(s).", formName, len(deleted))), http.StatusFound)
+		return
+	}
+
+	s.audit(r, db.AuditEntry{ActorEmail: user.Email, Action: db.ActionSyncRemoved, SyncJobID: &id, FormID: job.FilloutFormID,
+		Details: fmt.Sprintf("Removed sync for %q; Airtable records kept.", formName)})
+	http.Redirect(w, r, "/?flash="+url.QueryEscape("Removed sync for "+formName+"."), http.StatusFound)
+}
+
 type auditView struct {
 	baseView
 	Logs []auditRow
@@ -513,17 +630,25 @@ func (s *Server) serverError(w http.ResponseWriter, what string, err error) {
 	http.Error(w, "internal server error", http.StatusInternalServerError)
 }
 
-// orderFields returns NPS record fields in a stable, human-friendly order, with
-// the Custom Fields rich text shown last and preformatted.
+// orderFields returns NPS record fields in a stable, human-friendly order. The
+// rich-text columns (the templatable feedback fields and the Custom Fields
+// catch-all) are rendered the way Airtable displays them; everything else is
+// shown as escaped plain text. Custom Fields is shown last.
 func orderFields(fields map[string]any) []fieldKV {
 	var out []fieldKV
-	add := func(name string, pre bool) {
-		if v, ok := fields[name]; ok {
-			out = append(out, fieldKV{Name: name, Value: formatValue(v), Pre: pre})
+	add := func(name string, rich bool) {
+		v, ok := fields[name]
+		if !ok {
+			return
 		}
+		value := template.HTML(template.HTMLEscapeString(formatValue(v)))
+		if rich {
+			value = renderRichText(formatValue(v))
+		}
+		out = append(out, fieldKV{Name: name, Value: value, Rich: rich})
 	}
 	for _, tf := range nps.TargetFields {
-		add(tf.AirtableName, false)
+		add(tf.AirtableName, tf.Templatable)
 	}
 	add(nps.FieldYSWS, false)
 	add(nps.FieldOverrideCreatedAt, false)

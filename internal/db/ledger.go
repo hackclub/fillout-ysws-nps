@@ -96,6 +96,32 @@ func (db *DB) RecordSubmissions(ctx context.Context, recs []SubmissionRecord) (i
 	return int(tag.RowsAffected()), nil
 }
 
+// CreatedRecordIDs returns the Airtable record IDs this job actually created
+// (outcome "created"). Submissions the job skipped as already-existing are
+// excluded: those records were written by someone else and must never be
+// deleted when this sync is removed.
+func (db *DB) CreatedRecordIDs(ctx context.Context, jobID int64) ([]string, error) {
+	rows, err := db.pool.Query(ctx,
+		`SELECT airtable_record_id FROM synced_submissions
+		 WHERE sync_job_id = $1 AND outcome = $2 AND airtable_record_id <> ''
+		 ORDER BY id`,
+		jobID, OutcomeCreated)
+	if err != nil {
+		return nil, fmt.Errorf("db: listing created record ids: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("db: scanning record id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // IsSubmissionSynced reports whether a ledger entry already exists for the given
 // form and submission.
 func (db *DB) IsSubmissionSynced(ctx context.Context, formID, submissionID string) (bool, error) {
