@@ -4,73 +4,241 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Title}}</title>
+  <title>{{.Title}} · Hack Club</title>
+  <link rel="icon" href="https://assets.hackclub.com/icon-rounded.svg">
   <style>
-    :root { color-scheme: light dark; }
+    /* ── Phantom Sans: the Hack Club brand typeface ───────────────────── */
+    @font-face {
+      font-family: 'Phantom Sans';
+      src: url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Regular.woff2') format('woff2'),
+           url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Regular.woff') format('woff');
+      font-weight: 400; font-style: normal; font-display: swap;
+    }
+    @font-face {
+      font-family: 'Phantom Sans';
+      src: url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Italic.woff2') format('woff2'),
+           url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Italic.woff') format('woff');
+      font-weight: 400; font-style: italic; font-display: swap;
+    }
+    @font-face {
+      font-family: 'Phantom Sans';
+      src: url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Bold.woff2') format('woff2'),
+           url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Bold.woff') format('woff');
+      font-weight: 700; font-style: normal; font-display: swap;
+    }
+
+    /* ── Hack Club brand tokens ───────────────────────────────────────── */
+    :root {
+      --snow:#f9fafc; --white:#ffffff; --smoke:#e0e6ed; --smoke-soft:#eef1f5;
+      --muted:#8492a6; --slate:#3c4858; --dark:#1f2d3d;
+      --red:#ec3750; --orange:#ff8c37; --yellow:#f1c40f; --green:#33d6a6;
+      --cyan:#5bc0de; --blue:#338eda; --purple:#a633d6;
+      --grad:linear-gradient(90deg,#ec3750 0%,#ff8c37 100%);
+      --sans:'Phantom Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+      --mono:ui-monospace,'SF Mono',SFMono-Regular,'JetBrains Mono',Menlo,monospace;
+      --radius:16px; --radius-sm:10px; --radius-pill:999px;
+      --shadow:0 1px 2px rgba(31,45,61,.05),0 8px 28px rgba(31,45,61,.07);
+      --shadow-lift:0 2px 6px rgba(31,45,61,.07),0 18px 44px rgba(31,45,61,.12);
+      --ring:0 0 0 3px rgba(51,142,218,.35);
+    }
     * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
     body {
-      margin: 0;
-      min-height: 100vh;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background: linear-gradient(135deg, #ec3750 0%, #ff8c37 100%);
-      color: #fff;
+      margin: 0; min-height: 100vh;
+      font-family: var(--sans);
+      font-size: 17px; line-height: 1.6;
+      color: var(--dark); background: var(--snow);
+      -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
     }
-    a { color: #fff; }
-    header.bar {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 1rem 1.5rem; background: rgba(0,0,0,0.18);
+    /* The Hack Club signature gradient, used as a hairline accent, not a wash. */
+    .brandbar { height: 4px; background: var(--grad); }
+
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    h1,h2,h3 { line-height: 1.2; letter-spacing: -0.02em; margin: 0; }
+    h1 { font-size: 2rem; font-weight: 700; }
+    h2 { font-size: 1.3rem; font-weight: 700; }
+    p { margin: 0.5rem 0 0; }
+    code,pre,.mono { font-family: var(--mono); }
+    :focus-visible { outline: none; box-shadow: var(--ring); border-radius: 6px; }
+
+    /* ── App bar ──────────────────────────────────────────────────────── */
+    .appbar {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      padding: 0.85rem 1.5rem; background: var(--white);
+      border-bottom: 1px solid var(--smoke); flex-wrap: wrap;
     }
-    header.bar .brand { font-weight: 700; font-size: 1.1rem; }
-    header.bar nav a { margin-left: 1rem; text-decoration: none; opacity: 0.95; }
-    main { max-width: 60rem; margin: 0 auto; padding: 1.5rem; }
-    .card {
-      background: rgba(0,0,0,0.18); border-radius: 14px; padding: 1.5rem;
-      backdrop-filter: blur(6px); box-shadow: 0 10px 40px rgba(0,0,0,0.25);
-      margin-bottom: 1.5rem;
-    }
-    h1 { margin: 0 0 0.75rem; }
-    h2 { margin: 0 0 0.75rem; font-size: 1.25rem; }
-    p { line-height: 1.5; }
-    label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
+    .appbar .brand { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+    .appbar .brand img { height: 30px; width: auto; display: block; }
+    .appbar .wordmark { font-weight: 700; font-size: 1.05rem; color: var(--dark); white-space: nowrap; }
+    .appbar .wordmark .arrow { color: var(--red); }
+    .appbar nav { display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
+    .appbar nav a.navlink { color: var(--slate); font-weight: 600; font-size: 0.95rem; }
+    .appbar nav a.navlink:hover { color: var(--dark); text-decoration: none; }
+    .appbar .who { color: var(--muted); font-size: 0.85rem; font-family: var(--mono); }
+    .appbar .who::before { content: ''; display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; background: var(--green); margin-right: 0.4rem; vertical-align: middle; }
+
+    /* ── Layout ───────────────────────────────────────────────────────── */
+    main { max-width: 64rem; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+    .stack > * + * { margin-top: 1.25rem; }
+    .eyebrow { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--red); margin: 0 0 0.5rem; }
+    .lede { color: var(--slate); max-width: 46rem; }
+    .muted { color: var(--muted); }
+    .small { font-size: 0.85rem; }
+
+    /* ── Cards ────────────────────────────────────────────────────────── */
+    .card { background: var(--white); border: 1px solid var(--smoke);
+      border-radius: var(--radius); padding: 1.6rem; box-shadow: var(--shadow); }
+    .card + .card { margin-top: 1.25rem; }
+    .card h1 + .lede, .card h2 + .lede { margin-top: 0.35rem; }
+
+    /* ── Buttons ──────────────────────────────────────────────────────── */
+    .btn { display: inline-flex; align-items: center; gap: 0.45rem; cursor: pointer;
+      font-family: var(--sans); font-size: 1rem; font-weight: 700; line-height: 1;
+      padding: 0.7rem 1.2rem; border-radius: var(--radius-pill); border: 1px solid transparent;
+      text-decoration: none; transition: transform .08s ease, box-shadow .15s ease, background .15s ease; }
+    .btn:hover { text-decoration: none; }
+    .btn:active { transform: translateY(1px); }
+    .btn.primary { background: var(--red); color: #fff; box-shadow: 0 6px 16px rgba(236,55,80,.28); }
+    .btn.primary:hover { background: #d92e46; box-shadow: 0 8px 22px rgba(236,55,80,.34); }
+    .btn.secondary { background: var(--white); color: var(--slate); border-color: var(--smoke); }
+    .btn.secondary:hover { border-color: var(--muted); color: var(--dark); }
+    .btn.ghost { background: transparent; color: var(--slate); border-color: var(--smoke); padding: 0.5rem 0.95rem; font-size: 0.9rem; }
+    .btn.ghost:hover { border-color: var(--muted); color: var(--dark); }
+    .btn.danger { background: #fff; color: var(--red); border-color: rgba(236,55,80,.35); padding: 0.5rem 0.95rem; font-size: 0.9rem; }
+    .btn.danger:hover { background: var(--red); color: #fff; border-color: var(--red); }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+
+    /* ── Forms ────────────────────────────────────────────────────────── */
+    label.field { display: block; font-weight: 700; color: var(--dark);
+      margin: 1.1rem 0 0.4rem; font-size: 0.95rem; }
+    label.field .hint { font-weight: 500; color: var(--muted); }
     input[type=text], textarea, select {
-      width: 100%; padding: 0.6rem 0.7rem; border-radius: 8px; border: none;
-      font-size: 1rem; font-family: inherit;
+      width: 100%; padding: 0.7rem 0.85rem; font-size: 1rem; font-family: var(--sans);
+      color: var(--dark); background: var(--white);
+      border: 1px solid var(--smoke); border-radius: var(--radius-sm); transition: border-color .15s, box-shadow .15s; }
+    input[type=text]:focus, textarea:focus, select:focus { border-color: var(--blue); box-shadow: var(--ring); outline: none; }
+    input::placeholder { color: #aab4c2; }
+    .helptext { margin: 0.45rem 0 0; color: var(--muted); font-size: 0.85rem; }
+    .helptext code { background: var(--smoke-soft); padding: 0.05rem 0.3rem; border-radius: 5px; font-size: 0.85em; }
+
+    /* ── Pipeline / flow signature ────────────────────────────────────── */
+    .flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
+    .flow-node { flex: 1 1 240px; min-width: 0; padding: 0.9rem 1.1rem;
+      border: 1px solid var(--smoke); border-radius: var(--radius-sm); background: var(--snow); }
+    .flow-node .role { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 0.25rem; }
+    .flow-node .title { font-weight: 700; color: var(--dark); word-break: break-word; }
+    .flow-node .sub { color: var(--muted); font-size: 0.82rem; margin-top: 0.15rem; font-family: var(--mono); word-break: break-all; }
+    .flow-arrow { display: flex; align-items: center; justify-content: center; padding: 0 0.85rem; color: var(--orange); }
+    .flow-arrow svg { width: 30px; height: 18px; display: block; }
+    @media (max-width: 640px) {
+      .flow { flex-direction: column; }
+      .flow-arrow { padding: 0.45rem 0; transform: rotate(90deg); }
     }
-    .btn {
-      display: inline-block; margin-top: 1rem; padding: 0.6rem 1.1rem;
-      border-radius: 999px; border: none; cursor: pointer; font-size: 1rem;
-      font-weight: 600; background: #fff; color: #ec3750; text-decoration: none;
+
+    /* ── Pills & status ───────────────────────────────────────────────── */
+    .pill { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.65rem;
+      border-radius: var(--radius-pill); font-size: 0.78rem; font-weight: 700;
+      background: var(--smoke-soft); color: var(--slate); }
+    .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .pill.running { background: rgba(51,214,166,.16); color: #0f7a5a; }
+    .pill.stopped { background: var(--smoke-soft); color: var(--muted); }
+    .pill.tag { background: rgba(166,51,214,.12); color: #7d23a6; font-weight: 600; font-family: var(--mono); font-size: 0.74rem; }
+
+    /* Inline metrics with colored markers. */
+    .metrics { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; align-items: center; }
+    .metric { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--slate); }
+    .metric b { color: var(--dark); }
+    .metric .mk { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+    .mk.created { background: var(--green); }
+    .mk.skipped { background: var(--muted); }
+    .mk.errored { background: var(--red); }
+
+    /* ── Job rows ─────────────────────────────────────────────────────── */
+    .job { display: grid; grid-template-columns: 1fr auto; gap: 1.1rem 1.5rem; align-items: start;
+      padding: 1.25rem; border: 1px solid var(--smoke); border-radius: var(--radius);
+      background: var(--white); box-shadow: var(--shadow); transition: box-shadow .15s ease, transform .1s ease; }
+    .job + .job { margin-top: 0.9rem; }
+    .job:hover { box-shadow: var(--shadow-lift); }
+    .job-main { min-width: 0; }
+    .job-foot { display: flex; flex-wrap: wrap; gap: 0.6rem 1.25rem; align-items: center; margin-top: 0.9rem; }
+    .job-side { display: flex; flex-direction: column; align-items: flex-end; gap: 0.6rem; text-align: right; }
+    .errnote { color: var(--red); font-size: 0.82rem; max-width: 22rem; }
+    @media (max-width: 720px) {
+      .job { grid-template-columns: 1fr; }
+      .job-side { align-items: flex-start; text-align: left; }
     }
-    .btn.secondary { background: rgba(255,255,255,0.2); color: #fff; }
-    .btn.danger { background: rgba(0,0,0,0.25); color: #fff; }
+
+    /* ── Tables ───────────────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid rgba(255,255,255,0.18); vertical-align: top; }
-    th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.85; }
-    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    pre.richtext { white-space: pre-wrap; background: rgba(0,0,0,0.22); padding: 0.6rem 0.7rem; border-radius: 8px; margin: 0.3rem 0 0; font-size: 0.85rem; }
-    .pill { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.75rem; background: rgba(255,255,255,0.22); }
-    .pill.active { background: #2ecc71; color: #062b15; }
-    .pill.stopped { background: rgba(0,0,0,0.3); }
-    .muted { opacity: 0.8; font-size: 0.85rem; }
-    .flash { background: rgba(46,204,113,0.25); border: 1px solid rgba(46,204,113,0.5); padding: 0.7rem 0.9rem; border-radius: 8px; margin-bottom: 1rem; }
-    .error { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.4); padding: 0.7rem 0.9rem; border-radius: 8px; margin-bottom: 1rem; }
-    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
-    .field-name { font-weight: 600; }
+    th, td { text-align: left; padding: 0.7rem 0.8rem; border-bottom: 1px solid var(--smoke); vertical-align: top; }
+    thead th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--muted); font-weight: 700; border-bottom: 2px solid var(--smoke); }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: var(--snow); }
+    .field-name { font-weight: 700; color: var(--dark); }
+    .id { font-family: var(--mono); font-size: 0.82rem; color: var(--muted); word-break: break-all; }
+    pre.richtext { white-space: pre-wrap; background: var(--snow); border: 1px solid var(--smoke);
+      padding: 0.7rem 0.8rem; border-radius: var(--radius-sm); margin: 0.3rem 0 0; font-size: 0.85rem; color: var(--slate); }
+
+    /* ── Notices ──────────────────────────────────────────────────────── */
+    .notice { padding: 0.85rem 1.1rem; border-radius: var(--radius-sm); margin-bottom: 1.25rem;
+      display: flex; gap: 0.6rem; align-items: flex-start; font-size: 0.95rem; }
+    .notice.flash { background: rgba(51,214,166,.12); border: 1px solid rgba(51,214,166,.4); color: #0f6b50; }
+    .notice.error { background: rgba(236,55,80,.08); border: 1px solid rgba(236,55,80,.35); color: #b3243b; }
+    .notice .ic { flex: none; font-weight: 700; }
+
+    /* ── Sample preview blocks ────────────────────────────────────────── */
+    .sample { border: 1px solid var(--smoke); border-radius: var(--radius-sm); padding: 1rem 1.1rem; background: var(--snow); }
+    .sample + .sample { margin-top: 0.9rem; }
+    .sample-head { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; align-items: baseline; margin-bottom: 0.5rem; }
+    .sample-head .sid { font-family: var(--mono); font-weight: 700; color: var(--dark); font-size: 0.85rem; }
+
+    /* ── Login hero ───────────────────────────────────────────────────── */
+    .hero { text-align: center; padding: 2.5rem 1.6rem; }
+    .hero .flag { height: 64px; margin-bottom: 1.25rem; }
+    .hero h1 { font-size: 2.6rem; }
+    .hero .lede { margin: 0.9rem auto 0; }
+    .hero .flow { margin: 2rem auto; max-width: 36rem; text-align: left; }
+    .hero .btn-row { justify-content: center; margin-top: 0.5rem; }
+    .nps-scale { display: flex; gap: 4px; max-width: 36rem; margin: 1.75rem auto 0; }
+    .nps-scale span { flex: 1; height: 8px; border-radius: 3px; }
+    .nps-caption { color: var(--muted); font-size: 0.78rem; margin-top: 0.5rem; display: flex; justify-content: space-between; max-width: 36rem; margin-left: auto; margin-right: auto; }
+
+    /* ── Page-load reveal (quiet, one move) ───────────────────────────── */
+    main > * { animation: rise .5s cubic-bezier(.2,.7,.2,1) both; }
+    main > *:nth-child(2) { animation-delay: .05s; }
+    main > *:nth-child(3) { animation-delay: .1s; }
+    main > *:nth-child(4) { animation-delay: .15s; }
+    @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) {
+      main > * { animation: none; }
+      .btn:active { transform: none; }
+      .flow-arrow { transition: none; }
+    }
   </style>
 </head>
 <body>
+<div class="brandbar"></div>
 {{end}}
 
 {{define "nav"}}
-<header class="bar">
-  <span class="brand">Fillout → NPS sync</span>
+<header class="appbar">
+  <a class="brand" href="/">
+    <img src="https://assets.hackclub.com/flag-standalone.svg" alt="Hack Club">
+    <span class="wordmark">Fillout <span class="arrow">→</span> NPS sync</span>
+  </a>
   <nav>
     {{if .UserEmail}}
-      <a href="/">Dashboard</a>
-      <a href="/forms/new">New form</a>
-      <a href="/audit">Audit log</a>
-      <span class="muted">{{.UserEmail}}</span>
-      <a href="/logout">Sign out</a>
+      <a class="navlink" href="/">Dashboard</a>
+      <a class="navlink" href="/forms/new">New form</a>
+      <a class="navlink" href="/audit">Audit log</a>
+      <span class="who">{{.UserEmail}}</span>
+      <a class="navlink" href="/logout">Sign out</a>
     {{end}}
   </nav>
 </header>
@@ -81,13 +249,44 @@
 </html>
 {{end}}
 
+{{define "flow_arrow"}}<span class="flow-arrow" aria-hidden="true"><svg viewBox="0 0 30 18" fill="none"><defs><linearGradient id="ga" x1="0" y1="0" x2="30" y2="0" gradientUnits="userSpaceOnUse"><stop stop-color="#ec3750"/><stop offset="1" stop-color="#ff8c37"/></linearGradient></defs><path d="M0 9h25M19 2l8 7-8 7" stroke="url(#ga)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>{{end}}
+
 {{define "page_login"}}
 {{template "head" .}}
 <main>
-  <div class="card" style="text-align:center">
-    <h1>Fillout → NPS sync</h1>
-    <p>Sync Net Promoter Score responses from a Fillout form into the YSWS NPS table, with AI field mapping and automatic de-duplication.</p>
-    <a class="btn" href="/login">Log in with Hack Club</a>
+  <div class="card hero">
+    <img class="flag" src="https://assets.hackclub.com/flag-orpheus-top.svg" alt="Hack Club">
+    <p class="eyebrow">Hack Club · YSWS Operations</p>
+    <h1>Fillout <span style="color:var(--red)">→</span> NPS sync</h1>
+    <p class="lede">Pull Net Promoter Score responses from a Fillout form straight into the YSWS NPS table — with AI field mapping and automatic de-duplication, so nothing lands twice.</p>
+
+    <div class="flow">
+      <div class="flow-node">
+        <div class="role">Source</div>
+        <div class="title">A Fillout form</div>
+        <div class="sub">your NPS survey responses</div>
+      </div>
+      {{template "flow_arrow"}}
+      <div class="flow-node">
+        <div class="role">Destination</div>
+        <div class="title">YSWS NPS table</div>
+        <div class="sub">linked, tagged, de-duplicated</div>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <a class="btn primary" href="/login">Log in with Hack Club</a>
+      {{if .DevLogin}}<a class="btn secondary" href="/dev-login">Dev login</a>{{end}}
+    </div>
+    <div class="nps-scale" aria-hidden="true">
+      <span style="background:#ec3750"></span><span style="background:#ec3750"></span>
+      <span style="background:#ff6b4a"></span><span style="background:#ff8c37"></span>
+      <span style="background:#ff8c37"></span><span style="background:#ffa233"></span>
+      <span style="background:#f1c40f"></span><span style="background:#bcd34a"></span>
+      <span style="background:#7ed98a"></span><span style="background:#33d6a6"></span>
+      <span style="background:#33d6a6"></span>
+    </div>
+    <div class="nps-caption"><span>0 · Detractors</span><span>7–8 · Passives</span><span>Promoters · 10</span></div>
   </div>
 </main>
 {{template "foot" .}}
@@ -96,52 +295,74 @@
 {{define "page_dashboard"}}
 {{template "head" .}}
 {{template "nav" .}}
-<main>
-  {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+<main class="stack">
+  {{if .Flash}}<div class="notice flash"><span class="ic">✓</span><span>{{.Flash}}</span></div>{{end}}
   <div class="card">
+    <p class="eyebrow">Dashboard</p>
     <h1>Sync jobs</h1>
-    <p class="muted">Each job polls a Fillout form and writes new submissions into its Airtable NPS table.</p>
-    <a class="btn" href="/forms/new">Set up a new form</a>
+    <p class="lede">Each job polls a Fillout form on a schedule and writes new submissions into its NPS table. Set one up and it keeps running until you stop it.</p>
+    <div class="btn-row" style="margin-top:1.1rem">
+      <a class="btn primary" href="/forms/new">Set up a new form</a>
+    </div>
   </div>
 
   {{if .Jobs}}
-  <div class="card">
-    <table>
-      <thead><tr>
-        <th>Form</th><th>Target / YSWS</th><th>Set up by</th><th>Status</th><th>Synced</th><th>Last poll</th><th></th>
-      </tr></thead>
-      <tbody>
-      {{range .Jobs}}
-        <tr>
-          <td><span class="field-name">{{.FormName}}</span><br><span class="muted">{{.FormID}}</span>{{if .Tags}}<br><span class="muted">tags: {{.Tags}}</span>{{end}}</td>
-          <td>{{.BaseID}}<br><span class="muted">{{.Table}}{{if .YSWS}} · YSWS: {{.YSWS}}{{end}}</span></td>
-          <td class="muted">{{.CreatedBy}}</td>
-          <td>
-            {{if .Running}}<span class="pill active">running</span>{{else}}<span class="pill stopped">{{.Status}}</span>{{end}}
-            {{if .LastError}}<br><span class="muted">⚠ {{.LastError}}</span>{{end}}
-          </td>
-          <td>{{.Created}} created<br><span class="muted">{{.Skipped}} dupes skipped</span>{{if .Errored}}<br><span class="muted">{{.Errored}} errors</span>{{end}}</td>
-          <td class="muted">{{.LastPolled}}</td>
-          <td>
-            {{if .Running}}
-            <form method="post" action="/sync/stop" style="margin:0">
-              <input type="hidden" name="job_id" value="{{.ID}}">
-              <button class="btn danger" type="submit">Stop</button>
-            </form>
-            {{else}}
-            <form method="post" action="/sync/resume" style="margin:0">
-              <input type="hidden" name="job_id" value="{{.ID}}">
-              <button class="btn secondary" type="submit">Resume</button>
-            </form>
-            {{end}}
-          </td>
-        </tr>
-      {{end}}
-      </tbody>
-    </table>
-  </div>
+    {{range .Jobs}}
+    <div class="job">
+      <div class="job-main">
+        <div class="flow">
+          <div class="flow-node">
+            <div class="role">Fillout form</div>
+            <div class="title">{{.FormName}}</div>
+            <div class="sub">{{.FormID}}</div>
+          </div>
+          {{template "flow_arrow"}}
+          <div class="flow-node">
+            <div class="role">NPS table{{if .YSWS}} · {{.YSWS}}{{end}}</div>
+            <div class="title">{{.Table}}</div>
+            <div class="sub">{{.BaseID}}</div>
+          </div>
+        </div>
+        <div class="job-foot">
+          <div class="metrics">
+            <span class="metric"><span class="mk created"></span><b>{{.Created}}</b> synced</span>
+            <span class="metric"><span class="mk skipped"></span><b>{{.Skipped}}</b> dupes skipped</span>
+            {{if .Errored}}<span class="metric"><span class="mk errored"></span><b>{{.Errored}}</b> errors</span>{{end}}
+          </div>
+          {{if .Tags}}<span class="pill tag">{{.Tags}}</span>{{end}}
+        </div>
+      </div>
+      <div class="job-side">
+        {{if .Running}}<span class="pill running"><span class="dot"></span>Running</span>
+        {{else}}<span class="pill stopped"><span class="dot"></span>{{.Status}}</span>{{end}}
+        <div class="small muted">Last poll {{.LastPolled}}</div>
+        <div class="small muted">Set up by {{.CreatedBy}}</div>
+        {{if .LastError}}<div class="errnote">⚠ {{.LastError}}</div>{{end}}
+        {{if .Running}}
+        <form method="post" action="/sync/stop" style="margin:0">
+          <input type="hidden" name="job_id" value="{{.ID}}">
+          <button class="btn danger" type="submit">Stop sync</button>
+        </form>
+        {{else}}
+        <form method="post" action="/sync/resume" style="margin:0">
+          <input type="hidden" name="job_id" value="{{.ID}}">
+          <button class="btn secondary" type="submit">Resume</button>
+        </form>
+        {{end}}
+      </div>
+    </div>
+    {{end}}
   {{else}}
-  <div class="card"><p class="muted">No sync jobs yet.</p></div>
+  <div class="card" style="text-align:center; padding:2.5rem 1.6rem">
+    <div class="flow" style="max-width:32rem;margin:0 auto 1.25rem">
+      <div class="flow-node"><div class="role">Source</div><div class="title">A Fillout form</div></div>
+      {{template "flow_arrow"}}
+      <div class="flow-node"><div class="role">Destination</div><div class="title">NPS table</div></div>
+    </div>
+    <h2>No syncs yet</h2>
+    <p class="lede" style="margin-left:auto;margin-right:auto">Connect your first Fillout form to start streaming NPS responses into Airtable.</p>
+    <div class="btn-row" style="justify-content:center;margin-top:1.1rem"><a class="btn primary" href="/forms/new">Set up a new form</a></div>
+  </div>
   {{end}}
 </main>
 {{template "foot" .}}
@@ -150,15 +371,20 @@
 {{define "page_new_form"}}
 {{template "head" .}}
 {{template "nav" .}}
-<main>
-  {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+<main class="stack">
+  {{if .Error}}<div class="notice error"><span class="ic">!</span><span>{{.Error}}</span></div>{{end}}
   <div class="card">
+    <p class="eyebrow">Step 1 of 2 · Connect a form</p>
     <h1>Set up a new form</h1>
-    <p>Paste a Fillout form link or form ID. We'll fetch its questions and a few real submissions, then use AI to map each question onto the NPS table.</p>
+    <p class="lede">Paste a Fillout form link or its ID. We'll fetch the questions and a few real submissions, then use AI to map each question onto the NPS table for you to review.</p>
     <form method="post" action="/forms/preview">
-      <label for="form_input">Fillout form link or ID</label>
-      <input type="text" id="form_input" name="form_input" placeholder="forms.fillout.com/t/… · build.fillout.com/editor/… · or the form ID" value="{{.FormInput}}" required>
-      <button class="btn" type="submit">Preview mapping</button>
+      <label class="field" for="form_input">Fillout form link or ID</label>
+      <input type="text" id="form_input" name="form_input" placeholder="forms.fillout.com/t/…  ·  build.fillout.com/editor/…  ·  or the form ID" value="{{.FormInput}}" required autofocus>
+      <p class="helptext">We accept the public form link, the editor link, or a bare form ID.</p>
+      <div class="btn-row" style="margin-top:1.2rem">
+        <button class="btn primary" type="submit">Preview mapping →</button>
+        <a class="btn ghost" href="/">Cancel</a>
+      </div>
     </form>
   </div>
 </main>
@@ -168,82 +394,101 @@
 {{define "page_preview"}}
 {{template "head" .}}
 {{template "nav" .}}
-<main>
-  {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+<main class="stack">
+  {{if .Error}}<div class="notice error"><span class="ic">!</span><span>{{.Error}}</span></div>{{end}}
   <form method="post" action="/sync/start">
     <input type="hidden" name="form_id" value="{{.FormID}}">
     <input type="hidden" name="form_name" value="{{.FormName}}">
 
-    <div class="card">
+    <div class="card stack-tight">
+      <p class="eyebrow">Step 2 of 2 · Review &amp; link</p>
       <h1>{{.FormName}}</h1>
-      <p class="muted">Form ID: {{.FormID}} · writing to base {{.BaseID}}, table “{{.Table}}”.</p>
-      <label for="ysws_program">YSWS program to link <span class="muted">(required)</span></label>
+      <div class="flow" style="margin-top:1rem">
+        <div class="flow-node"><div class="role">Fillout form</div><div class="title">{{.FormName}}</div><div class="sub">{{.FormID}}</div></div>
+        {{template "flow_arrow"}}
+        <div class="flow-node"><div class="role">Destination</div><div class="title">{{.Table}}</div><div class="sub">{{.BaseID}}</div></div>
+      </div>
+
+      <label class="field" for="ysws_program">YSWS program to link <span class="hint">(required)</span></label>
       <input type="text" id="ysws_program" name="ysws_program" list="ysws-programs" placeholder="Search YSWS programs…" value="{{.YSWSProgram}}" required autocomplete="off">
       <datalist id="ysws-programs">
         {{range .Programs}}<option value="{{.}}"></option>{{end}}
       </datalist>
-      <p class="muted">Every synced record is linked to this program in the NPS “YSWS” field. Start typing to search {{len .Programs}} programs.</p>
+      <p class="helptext">Every synced record links to this program in the NPS “YSWS” field. Start typing to search {{len .Programs}} programs.</p>
 
-      <label for="tags">Tags to add to feedback entries <span class="muted">(encouraged)</span></label>
+      <label class="field" for="tags">Tags for these feedback entries <span class="hint">(encouraged)</span></label>
       <input type="text" id="tags" name="tags" placeholder="e.g. 2026-06-15_2nd_newsletter_feedback, newsletter" value="{{.Tags}}" autocomplete="off">
-      <p class="muted">Comma-separated, one word each (dashes/underscores ok). Labels where this feedback came from; added to every record's Tags column.</p>
+      <p class="helptext">Comma-separated, one word each (dashes/underscores ok). They label where this feedback came from and get added to every record's Tags column.</p>
       {{if .TagExamples}}
-      <p class="muted">Example feedback tags from past programs:
+      <p class="helptext">Tags used by past programs:
         {{range $i, $e := .TagExamples}}{{if $i}} · {{end}}<strong>{{$e.Program}}</strong>: {{$e.Tags}}{{end}}
       </p>
       {{end}}
     </div>
 
     <div class="card">
-      <h2>Field mapping</h2>
-      <p class="muted">Each form question feeds the NPS column chosen below. “Custom Fields (catch-all)” keeps the answer verbatim; “Ignore” drops it. For the two feedback columns you can add an optional template to make the text read well — use <code>{{"{{question}}"}}</code> and <code>{{"{{answer}}"}}</code> (leave blank to copy the answer directly).</p>
-      <table>
-        <thead><tr><th>Form question</th><th>Type</th><th>NPS column it fills</th><th>Why</th></tr></thead>
-        <tbody>
-        {{range .Mappings}}
-          <tr>
-            <td class="field-name">{{.QuestionName}}<br><span class="muted">{{.QuestionID}}</span></td>
-            <td class="muted">{{.QuestionType}}</td>
-            <td>
-              <select name="target_{{.QuestionID}}" class="target-select" data-qid="{{.QuestionID}}">
-                {{$sel := .Target}}
-                {{range $.Targets}}
-                  <option value="{{.Value}}" {{if eq .Value $sel}}selected{{end}}>{{.Label}}</option>
-                {{end}}
-              </select>
-              <input type="text" class="template-input" id="template_{{.QuestionID}}" name="template_{{.QuestionID}}" value="{{.Template}}" placeholder="optional template, e.g. **{{"{{question}}"}}** {{"{{answer}}"}}" autocomplete="off" style="margin-top:0.4rem; display:none">
-            </td>
-            <td class="muted">{{if .Confidence}}<span class="pill">{{.Confidence}}</span> {{end}}{{.Reasoning}}</td>
-          </tr>
-        {{end}}
-        </tbody>
-      </table>
+      <p class="eyebrow">Field mapping</p>
+      <h2>Where each question lands</h2>
+      <p class="lede">Each form question feeds the NPS column chosen below. “Custom Fields (catch-all)” keeps the answer verbatim; “Ignore” drops it. For the two feedback columns you can add an optional template so the text reads well — use <code>{{"{{question}}"}}</code> and <code>{{"{{answer}}"}}</code> (leave blank to copy the answer directly).</p>
+      <div class="table-wrap" style="margin-top:1rem">
+        <table>
+          <thead><tr><th>Form question</th><th>Type</th><th>NPS column it fills</th><th>Why</th></tr></thead>
+          <tbody>
+          {{range .Mappings}}
+            <tr>
+              <td><span class="field-name">{{.QuestionName}}</span><br><span class="id">{{.QuestionID}}</span></td>
+              <td class="muted small">{{.QuestionType}}</td>
+              <td>
+                <select name="target_{{.QuestionID}}" class="target-select" data-qid="{{.QuestionID}}">
+                  {{$sel := .Target}}
+                  {{range $.Targets}}
+                    <option value="{{.Value}}" {{if eq .Value $sel}}selected{{end}}>{{.Label}}</option>
+                  {{end}}
+                </select>
+                <input type="text" class="template-input" id="template_{{.QuestionID}}" name="template_{{.QuestionID}}" value="{{.Template}}" placeholder="optional template, e.g. **{{"{{question}}"}}** {{"{{answer}}"}}" autocomplete="off" style="margin-top:0.5rem; display:none">
+              </td>
+              <td class="muted small">{{if .Confidence}}<span class="pill">{{.Confidence}}</span> {{end}}{{.Reasoning}}</td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div class="card">
-      <h2>Preview: first {{len .Samples}} submissions as NPS records</h2>
-      {{if not .Samples}}<p class="muted">This form has no submissions yet.</p>{{end}}
+      <p class="eyebrow">Preview</p>
+      <h2>First {{len .Samples}} submissions as NPS records</h2>
+      {{if not .Samples}}<p class="lede">This form has no submissions yet — the sync will pick them up as they arrive.</p>{{end}}
+      <div style="margin-top:1rem">
       {{range .Samples}}
-        <div class="card" style="background:rgba(0,0,0,0.12)">
-          <p class="muted">Submission {{.SubmissionID}} · {{.SubmissionTime}}</p>
-          <table>
-            <tbody>
-            {{range .Fields}}
-              <tr>
-                <td class="field-name" style="width:30%">{{.Name}}</td>
-                <td>{{if .Pre}}<pre class="richtext">{{.Value}}</pre>{{else}}{{.Value}}{{end}}</td>
-              </tr>
-            {{end}}
-            </tbody>
-          </table>
+        <div class="sample">
+          <div class="sample-head">
+            <span class="sid">{{.SubmissionID}}</span>
+            <span class="muted small">{{.SubmissionTime}}</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <tbody>
+              {{range .Fields}}
+                <tr>
+                  <td class="field-name" style="width:30%">{{.Name}}</td>
+                  <td>{{if .Pre}}<pre class="richtext">{{.Value}}</pre>{{else}}{{.Value}}{{end}}</td>
+                </tr>
+              {{end}}
+              </tbody>
+            </table>
+          </div>
         </div>
       {{end}}
+      </div>
     </div>
 
     <div class="card">
-      <p>Starting the sync writes these records to Airtable now and keeps polling for new submissions. Records already present (synced by us or anyone else) are skipped.</p>
-      <button class="btn" type="submit">Start sync</button>
-      <a class="btn secondary" href="/forms/new">Cancel</a>
+      <p>Starting the sync writes these records to Airtable now and keeps polling for new submissions. Records already present — synced by us or anyone else — are skipped.</p>
+      <div class="btn-row" style="margin-top:1.1rem">
+        <button class="btn primary" type="submit">Start sync</button>
+        <a class="btn ghost" href="/forms/new">Back</a>
+      </div>
     </div>
   </form>
   <script>
@@ -267,29 +512,32 @@
 {{define "page_audit"}}
 {{template "head" .}}
 {{template "nav" .}}
-<main>
+<main class="stack">
   <div class="card">
+    <p class="eyebrow">History</p>
     <h1>Audit log</h1>
-    <p class="muted">Who configured what, most recent first.</p>
+    <p class="lede">Who configured what, most recent first.</p>
   </div>
   <div class="card">
     {{if .Logs}}
-    <table>
-      <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Job</th><th>Details</th></tr></thead>
-      <tbody>
-      {{range .Logs}}
-        <tr>
-          <td class="muted">{{.When}}</td>
-          <td>{{.Actor}}</td>
-          <td><span class="pill">{{.Action}}</span></td>
-          <td class="muted">{{.JobID}}</td>
-          <td>{{.Detail}}</td>
-        </tr>
-      {{end}}
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Job</th><th>Details</th></tr></thead>
+        <tbody>
+        {{range .Logs}}
+          <tr>
+            <td class="muted small mono">{{.When}}</td>
+            <td>{{.Actor}}</td>
+            <td><span class="pill">{{.Action}}</span></td>
+            <td class="id">{{.JobID}}</td>
+            <td>{{.Detail}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
     {{else}}
-    <p class="muted">No audit entries yet.</p>
+    <p class="lede">No audit entries yet. Actions like creating, stopping, and resuming syncs will show up here.</p>
     {{end}}
   </div>
 </main>
@@ -301,9 +549,10 @@
 {{template "nav" .}}
 <main>
   <div class="card">
+    <p class="eyebrow">Heads up</p>
     <h1>{{.Heading}}</h1>
-    <p>{{.Message}}</p>
-    <a class="btn" href="/">Back to dashboard</a>
+    <p class="lede">{{.Message}}</p>
+    <div class="btn-row" style="margin-top:1.2rem"><a class="btn primary" href="/">Back to dashboard</a></div>
   </div>
 </main>
 {{template "foot" .}}

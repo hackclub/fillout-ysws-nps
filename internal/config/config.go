@@ -46,6 +46,12 @@ type Config struct {
 	// SessionSecret is the HMAC key used to sign session cookies.
 	SessionSecret []byte
 
+	// DevLoginEmail, when set, enables a local-only GET /dev-login route that
+	// signs in as this email without the Hack Club OIDC round-trip. It is for
+	// local development and automated UI testing only — leave it empty in any
+	// shared or production deployment. The email must still be on AllowedEmails.
+	DevLoginEmail string
+
 	// DatabaseURL is the Postgres connection string.
 	DatabaseURL string
 }
@@ -76,6 +82,7 @@ func loadFrom(lookup func(string) (string, bool)) (*Config, error) {
 		NPSTable:           firstNonEmpty(get("NPS_TABLE"), DefaultNPSTable),
 		AllowedEmails:      parseEmails(get("ALLOWED_EMAILS")),
 		SessionSecret:      []byte(get("SESSION_SECRET")),
+		DevLoginEmail:      strings.ToLower(get("DEV_LOGIN_EMAIL")),
 		DatabaseURL:        get("DATABASE_URL"),
 	}
 

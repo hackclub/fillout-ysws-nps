@@ -226,6 +226,69 @@ func TestStartDuplicateReactivatesExistingStoppedJob(t *testing.T) {
 	}
 }
 
+// devServer builds a Server with dev-login configured for devEmail and an
+// allow-list that accepts allowEmail.
+func devServer(t *testing.T, devEmail, allowEmail string) *Server {
+	t.Helper()
+	cfg := &config.Config{AirtableBaseID: "appTest", NPSTable: "NPS", DevLoginEmail: devEmail}
+	a := auth.New(nil, []byte("secret"), func(e string) bool { return e == allowEmail }, false)
+	at := &fakeAirtable{}
+	s, err := NewServer(cfg, a, nil, &fakeForms{}, at, nil, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	return s
+}
+
+func TestDevLogin_SignsInWhenConfigured(t *testing.T) {
+	s := devServer(t, "zach@hackclub.com", "zach@hackclub.com")
+
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev-login", nil))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/" {
+		t.Errorf("Location = %q, want /", loc)
+	}
+	var sess *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "hc_session" {
+			sess = c
+		}
+	}
+	if sess == nil {
+		t.Fatal("dev-login set no session cookie")
+	}
+
+	// The minted session must let a protected route through (no /login redirect).
+	req := httptest.NewRequest(http.MethodGet, "/forms/new", nil)
+	req.AddCookie(sess)
+	rec2 := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Errorf("protected route with dev session = %d, want 200", rec2.Code)
+	}
+}
+
+func TestDevLogin_AbsentWhenNotConfigured(t *testing.T) {
+	s := devServer(t, "", "zach@hackclub.com")
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev-login", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 when dev-login unconfigured", rec.Code)
+	}
+}
+
+func TestDevLogin_ForbiddenWhenNotAllowListed(t *testing.T) {
+	s := devServer(t, "stranger@example.com", "zach@hackclub.com")
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev-login", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 when dev email not allow-listed", rec.Code)
+	}
+}
+
 func TestParseFormID(t *testing.T) {
 	cases := map[string]string{
 		"abc123":                              "abc123",

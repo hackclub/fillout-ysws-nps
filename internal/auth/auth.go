@@ -123,12 +123,23 @@ func (a *Authenticator) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.setCookie(w, sessionCookie, session{
-		Email:     strings.ToLower(strings.TrimSpace(info.Email)),
-		ExpiresAt: a.now().Add(sessionTTL).Unix(),
-	}, sessionTTL)
+	a.IssueSession(w, info.Email)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
+
+// IssueSession sets a logged-in session cookie for email. It is the final step
+// of the OAuth callback and is also used by the optional dev-login shortcut.
+// It does not enforce the allow-list itself — CurrentUser re-checks it on every
+// request, so a session for a now-disallowed email is rejected on next use.
+func (a *Authenticator) IssueSession(w http.ResponseWriter, email string) {
+	a.setCookie(w, sessionCookie, session{
+		Email:     strings.ToLower(strings.TrimSpace(email)),
+		ExpiresAt: a.now().Add(sessionTTL).Unix(),
+	}, sessionTTL)
+}
+
+// Allowed reports whether email may log in, per the configured allow-list.
+func (a *Authenticator) Allowed(email string) bool { return a.allowed(email) }
 
 // Logout clears the session cookie.
 func (a *Authenticator) Logout(w http.ResponseWriter, r *http.Request) {

@@ -61,6 +61,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /logout", s.auth.Logout)
 	mux.HandleFunc("GET /{$}", s.handleHome)
 
+	// Dev-only shortcut: when DEV_LOGIN_EMAIL is set, skip the Hack Club OIDC
+	// round-trip and sign in directly. The route is not even registered unless
+	// configured, so it cannot exist in a production deployment.
+	if s.cfg.DevLoginEmail != "" {
+		log.Printf("dev-login enabled for %s — do NOT use this in production", s.cfg.DevLoginEmail)
+		mux.HandleFunc("GET /dev-login", s.handleDevLogin)
+	}
+
 	mux.Handle("GET /forms/new", s.auth.RequireUser(http.HandlerFunc(s.handleNewForm)))
 	mux.Handle("POST /forms/preview", s.auth.RequireUser(http.HandlerFunc(s.handlePreview)))
 	mux.Handle("POST /sync/start", s.auth.RequireUser(http.HandlerFunc(s.handleStart)))
@@ -68,6 +76,18 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /sync/resume", s.auth.RequireUser(http.HandlerFunc(s.handleResume)))
 	mux.Handle("GET /audit", s.auth.RequireUser(http.HandlerFunc(s.handleAudit)))
 	return mux
+}
+
+// handleDevLogin signs in as cfg.DevLoginEmail without OIDC. It is only wired up
+// when DEV_LOGIN_EMAIL is set (see Routes). The email must still be on the
+// allow-list, so it grants no access that ALLOWED_EMAILS doesn't already permit.
+func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.auth.Allowed(s.cfg.DevLoginEmail) {
+		http.Error(w, "dev-login email is not on ALLOWED_EMAILS", http.StatusForbidden)
+		return
+	}
+	s.auth.IssueSession(w, s.cfg.DevLoginEmail)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +101,9 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 type baseView struct {
 	Title     string
 	UserEmail string
+	// DevLogin is true when the dev-login shortcut is enabled, so the login
+	// screen can offer it. Never true in production (DEV_LOGIN_EMAIL unset).
+	DevLogin bool
 }
 
 type messageView struct {
@@ -157,7 +180,7 @@ type fieldKV struct {
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.auth.CurrentUser(r)
 	if !ok {
-		s.render(w, "page_login", baseView{Title: "Fillout → NPS sync"})
+		s.render(w, "page_login", baseView{Title: "Fillout → NPS sync", DevLogin: s.cfg.DevLoginEmail != ""})
 		return
 	}
 
@@ -471,7 +494,7 @@ func tagsSummary(tags string) string {
 
 func (s *Server) base(r *http.Request, title string) baseView {
 	user, _ := s.auth.CurrentUser(r)
-	return baseView{Title: title, UserEmail: user.Email}
+	return baseView{Title: title, UserEmail: user.Email, DevLogin: s.cfg.DevLoginEmail != ""}
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {

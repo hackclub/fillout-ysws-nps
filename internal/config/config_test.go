@@ -77,6 +77,28 @@ func TestLoadFrom_OverridesAndTrimming(t *testing.T) {
 	}
 }
 
+func TestLoadFrom_DevLoginEmail(t *testing.T) {
+	// Unset by default.
+	cfg, err := loadFrom(lookupFrom(fullEnv()))
+	if err != nil {
+		t.Fatalf("loadFrom: %v", err)
+	}
+	if cfg.DevLoginEmail != "" {
+		t.Errorf("DevLoginEmail = %q, want empty by default", cfg.DevLoginEmail)
+	}
+
+	// Set and normalized to lowercase.
+	env := fullEnv()
+	env["DEV_LOGIN_EMAIL"] = "  Zach@Hackclub.com  "
+	cfg, err = loadFrom(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("loadFrom: %v", err)
+	}
+	if cfg.DevLoginEmail != "zach@hackclub.com" {
+		t.Errorf("DevLoginEmail = %q, want zach@hackclub.com", cfg.DevLoginEmail)
+	}
+}
+
 func TestLoadFrom_MissingRequired(t *testing.T) {
 	env := fullEnv()
 	delete(env, "FILLOUT_API_KEY")
