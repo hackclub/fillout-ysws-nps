@@ -49,3 +49,47 @@ authorized redirect URL. So:
   to the auth app.
 
 Handy `make` targets: `up`, `down`, `logs`, `ps`, `restart`, `test`, `psql`.
+
+## Production deployment (Coolify)
+
+Production uses the root **`Dockerfile`** (not `docker-compose.yml` /
+`Dockerfile.dev`, which are dev-only). It's a multi-stage build that produces a
+~22 MB Alpine image holding a single static Go binary. HTML templates and SQL
+migrations are compiled into the binary via `//go:embed`, so the image carries
+no extra files — and migrations run automatically on startup.
+
+The container needs an **external Postgres**; the Dockerfile bundles only the
+app. In Coolify, create a Postgres database resource and point the app at it.
+
+Build/run it locally exactly as Coolify will:
+
+```bash
+docker build -t fillout-ysws-nps .
+docker run --rm -p 8080:8080 --env-file .env fillout-ysws-nps
+```
+
+Coolify setup:
+
+1. New Resource → your Git repo → Build Pack: **Dockerfile** (Coolify
+   auto-detects the root `Dockerfile`).
+2. Add a **PostgreSQL** database resource; copy its connection string into the
+   app's `DATABASE_URL`.
+3. Set the environment variables below (same ones the app validates at startup;
+   missing any aborts boot with a clear message).
+4. The app listens on `8080` inside the container — Coolify maps it. Health is
+   reported via the Dockerfile `HEALTHCHECK`, which polls `/healthz`
+   (unauthenticated, dependency-free).
+5. Set `HC_AUTH_CALLBACK_BASE_URL` to the app's public URL (e.g.
+   `https://nps.example.com`) and register `<that URL>/callback` with the Hack
+   Club Auth app, or login will fail.
+
+Required environment variables (see `.env.example` for descriptions):
+
+- `DATABASE_URL` — Postgres connection string from the Coolify DB resource
+- `HC_AUTH_CLIENT_ID`, `HC_AUTH_CLIENT_SECRET`, `HC_AUTH_CALLBACK_BASE_URL`
+- `FILLOUT_API_KEY`, `OPENAI_API_KEY`, `AIRTABLE_API_KEY`, `AIRTABLE_BASE_ID`
+- `SESSION_SECRET` — `head -c 32 /dev/urandom | base64`
+- `ALLOWED_EMAILS` — comma-separated login allow-list
+
+Optional: `NPS_TABLE` (default `NPS`), `NPS_POLL_INTERVAL` (default `30s`),
+`PORT` (default `8080`).
