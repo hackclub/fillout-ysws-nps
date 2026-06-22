@@ -32,4 +32,20 @@ Key `.env` variables:
 unique `APP_PORT`, `POSTGRES_PORT`, and `COMPOSE_PROJECT_NAME` so concurrent dev
 environments don't fight over host ports, container names, networks, or volumes.
 
+### OAuth login (Hack Club Auth) callback URLs
+
+Sign-in (`Log in with Hack Club`) only works if the app's callback URL is
+registered with the Hack Club Auth app. To let any worktree log in regardless of
+its port, the whole range `http://localhost:3000/callback` …
+`http://localhost:3050/callback` (ports **3000–3050**) is registered as an
+authorized redirect URL. So:
+
+- Pick your worktree's `APP_PORT` from **3000–3050** if you need working login.
+- Set `HC_AUTH_CALLBACK_BASE_URL=http://localhost:${APP_PORT}` to match — the
+  callback is `<base>/callback`, and it must equal the port the app is published
+  on or Hack Club will reject the redirect.
+- A port outside 3000–3050 still serves the UI (incl. the login page), but the
+  OAuth redirect will fail until that exact `localhost:<port>/callback` is added
+  to the auth app.
+
 Handy `make` targets: `up`, `down`, `logs`, `ps`, `restart`, `test`, `psql`.
