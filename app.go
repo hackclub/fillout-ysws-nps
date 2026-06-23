@@ -71,6 +71,7 @@ func (s *Server) Routes() http.Handler {
 
 	mux.Handle("GET /forms/new", s.auth.RequireUser(http.HandlerFunc(s.handleNewForm)))
 	mux.Handle("POST /forms/preview", s.auth.RequireUser(http.HandlerFunc(s.handlePreview)))
+	mux.Handle("POST /forms/preview/samples", s.auth.RequireUser(http.HandlerFunc(s.handlePreviewSamples)))
 	mux.Handle("POST /sync/start", s.auth.RequireUser(http.HandlerFunc(s.handleStart)))
 	mux.Handle("POST /sync/stop", s.auth.RequireUser(http.HandlerFunc(s.handleStop)))
 	mux.Handle("POST /sync/resume", s.auth.RequireUser(http.HandlerFunc(s.handleResume)))
@@ -176,6 +177,12 @@ type tagExample struct {
 	Tags    string
 }
 
+// samplesView carries just the sample-records preview, for the partial re-render
+// served to the mapping screen when a target or template changes.
+type samplesView struct {
+	Samples []sampleView
+}
+
 type sampleView struct {
 	SubmissionID   string
 	SubmissionTime string
@@ -274,6 +281,52 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	s.renderPreview(w, r, formID, meta.Name, mapping, "", "", "")
 }
 
+// handlePreviewSamples re-renders only the sample-records preview for the
+// current (possibly edited) mapping. The mapping screen posts the form here
+// whenever a target or template changes, so the "First N submissions as NPS
+// records" preview stays in sync without a full page reload. It reuses the same
+// transform the real sync uses, so the preview can't drift from what gets
+// written. The mapping is rebuilt from the form's authoritative question list
+// (re-fetched) plus the submitted target_/template_ values.
+func (s *Server) handlePreviewSamples(w http.ResponseWriter, r *http.Request) {
+	formID := strings.TrimSpace(r.FormValue("form_id"))
+	if formID == "" {
+		http.Error(w, "missing form id", http.StatusBadRequest)
+		return
+	}
+
+	meta, err := s.fillout.GetForm(r.Context(), formID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("couldn't reload form %s: %v", formID, err), http.StatusBadGateway)
+		return
+	}
+
+	mapping := nps.BuildMapping(meta.Questions,
+		func(qid string) string { return r.FormValue("target_" + qid) },
+		func(qid string) string { return r.FormValue("template_" + qid) },
+	)
+	samples := s.buildSamples(r.Context(), formID, mapping, strings.TrimSpace(r.FormValue("ysws_program")), r.FormValue("tags"))
+	s.render(w, "preview_samples", samplesView{Samples: samples})
+}
+
+// buildSamples fetches the first few submissions and transforms them into NPS
+// records under the given mapping, YSWS link, and tags, for the preview screen.
+// It mirrors the sync's own transform so the preview matches what gets written.
+func (s *Server) buildSamples(ctx context.Context, formID string, mapping nps.Mapping, ysws, tags string) []sampleView {
+	opts := nps.RecordOptions{YSWSProgram: ysws, Tags: nps.NormalizeTags(tags)}
+	var samples []sampleView
+	if page, err := s.fillout.GetSubmissions(ctx, formID, &fillout.GetSubmissionsParams{Limit: 5, Sort: fillout.SortDesc}); err == nil {
+		for _, sub := range page.Responses {
+			samples = append(samples, sampleView{
+				SubmissionID:   sub.SubmissionID,
+				SubmissionTime: sub.SubmissionTime.Format("2006-01-02 15:04"),
+				Fields:         orderFields(nps.BuildFields(sub, mapping, opts)),
+			})
+		}
+	}
+	return samples
+}
+
 // renderPreview renders the mapping/preview screen. It fetches the program
 // picker options and a few sample transformed records (reflecting the chosen
 // YSWS link and tags). It is shared by the initial preview and the re-render
@@ -292,17 +345,7 @@ func (s *Server) renderPreview(w http.ResponseWriter, r *http.Request, formID, f
 		}
 	}
 
-	opts := nps.RecordOptions{YSWSProgram: ysws, Tags: nps.NormalizeTags(tags)}
-	var samples []sampleView
-	if page, err := s.fillout.GetSubmissions(r.Context(), formID, &fillout.GetSubmissionsParams{Limit: 5, Sort: fillout.SortDesc}); err == nil {
-		for _, sub := range page.Responses {
-			samples = append(samples, sampleView{
-				SubmissionID:   sub.SubmissionID,
-				SubmissionTime: sub.SubmissionTime.Format("2006-01-02 15:04"),
-				Fields:         orderFields(nps.BuildFields(sub, mapping, opts)),
-			})
-		}
-	}
+	samples := s.buildSamples(r.Context(), formID, mapping, ysws, tags)
 
 	s.render(w, "page_preview", previewView{
 		baseView:    s.base(r, "Preview mapping"),

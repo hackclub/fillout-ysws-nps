@@ -449,6 +449,33 @@
 {{template "foot" .}}
 {{end}}
 
+{{define "preview_samples"}}
+<h2>First {{len .Samples}} submissions as NPS records</h2>
+{{if not .Samples}}<p class="lede">This form has no submissions yet — the sync will pick them up as they arrive.</p>{{end}}
+<div style="margin-top:1rem">
+{{range .Samples}}
+  <div class="sample">
+    <div class="sample-head">
+      <span class="sid">{{.SubmissionID}}</span>
+      <span class="muted small">{{.SubmissionTime}}</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <tbody>
+        {{range .Fields}}
+          <tr>
+            <td class="field-name" style="width:30%">{{.Name}}</td>
+            <td>{{if .Rich}}<div class="richtext">{{.Value}}</div>{{else}}{{.Value}}{{end}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{{end}}
+</div>
+{{end}}
+
 {{define "page_preview"}}
 {{template "head" .}}
 {{template "nav" .}}
@@ -516,29 +543,8 @@
 
     <div class="card">
       <p class="eyebrow">Preview</p>
-      <h2>First {{len .Samples}} submissions as NPS records</h2>
-      {{if not .Samples}}<p class="lede">This form has no submissions yet — the sync will pick them up as they arrive.</p>{{end}}
-      <div style="margin-top:1rem">
-      {{range .Samples}}
-        <div class="sample">
-          <div class="sample-head">
-            <span class="sid">{{.SubmissionID}}</span>
-            <span class="muted small">{{.SubmissionTime}}</span>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <tbody>
-              {{range .Fields}}
-                <tr>
-                  <td class="field-name" style="width:30%">{{.Name}}</td>
-                  <td>{{if .Rich}}<div class="richtext">{{.Value}}</div>{{else}}{{.Value}}{{end}}</td>
-                </tr>
-              {{end}}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      {{end}}
+      <div id="preview-samples" aria-live="polite">
+        {{template "preview_samples" .}}
       </div>
     </div>
 
@@ -561,6 +567,48 @@
         var sync = function () { tmpl.style.display = TEMPLATABLE[sel.value] ? 'block' : 'none'; };
         sel.addEventListener('change', sync);
         sync();
+      });
+    })();
+
+    // Re-render the sample preview whenever the mapping changes, so it always
+    // shows what the sync would actually write. The server does the transform
+    // (POST /forms/preview/samples) and returns just the samples fragment, which
+    // we swap into #preview-samples. A sequence guard drops any response that a
+    // newer request has already superseded.
+    (function () {
+      var form = document.querySelector('form[action="/sync/start"]');
+      var box = document.getElementById('preview-samples');
+      if (!form || !box) return;
+
+      var seq = 0;
+      function refresh() {
+        var mine = ++seq;
+        box.style.opacity = '0.5';
+        fetch('/forms/preview/samples', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams(new FormData(form)).toString(),
+        }).then(function (resp) {
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          return resp.text();
+        }).then(function (html) {
+          if (mine !== seq) return; // a newer request is in flight; ignore this one
+          box.innerHTML = html;
+          box.style.opacity = '';
+        }).catch(function () {
+          if (mine !== seq) return;
+          box.style.opacity = ''; // leave the last good preview in place on error
+        });
+      }
+
+      var timer;
+      function debounced() { clearTimeout(timer); timer = setTimeout(refresh, 350); }
+
+      form.querySelectorAll('.target-select').forEach(function (sel) {
+        sel.addEventListener('change', refresh);
+      });
+      form.querySelectorAll('.template-input').forEach(function (inp) {
+        inp.addEventListener('input', debounced);
       });
     })();
   </script>

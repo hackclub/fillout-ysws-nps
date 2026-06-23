@@ -185,6 +185,70 @@ func TestPreviewRendersMappingAndSamples(t *testing.T) {
 	}
 }
 
+func TestPreviewSamplesReflectsEditedMapping(t *testing.T) {
+	fc := &fakeForms{
+		meta: &fillout.FormMetadata{
+			Name: "Boba NPS",
+			Questions: []fillout.QuestionDef{
+				{ID: "q_score", Name: "Recommend?", Type: fillout.QuestionOpinionScale},
+				{ID: "q_extra", Name: "Anything else?", Type: fillout.QuestionLongAnswer},
+			},
+		},
+		page: &fillout.SubmissionsPage{
+			Responses: []fillout.Submission{{
+				SubmissionID: "subZ",
+				Questions: []fillout.QuestionAnswer{
+					{ID: "q_score", Name: "Recommend?", Value: json.RawMessage(`9`)},
+					{ID: "q_extra", Name: "Anything else?", Value: json.RawMessage(`"add more boba"`)},
+				},
+			}},
+		},
+	}
+	// No mapper needed: the samples endpoint rebuilds the mapping from the
+	// submitted form values, not the AI.
+	s := newTestServer(t, fc, nil)
+
+	// The reviewer re-targets the free-text question from the AI's default
+	// (custom_fields) onto the "How can we improve?" feedback column.
+	form := strings.NewReader("form_id=abc123&ysws_program=Boba+Drops&target_q_score=score&target_q_extra=improve")
+	req := httptest.NewRequest(http.MethodPost, "/forms/preview/samples", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	s.handlePreviewSamples(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body:\n%s", rec.Code, body)
+	}
+	for _, want := range []string{
+		"First 1 submissions as NPS records", // fragment heading reflects sample count
+		"How can we improve?",                // the edited target's NPS column now appears
+		"add more boba",                      // the answer rendered under it
+		nps.StampLine("subZ"),                // dedup stamp still present in Custom Fields
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("samples fragment missing %q\nbody:\n%s", want, body)
+		}
+	}
+	// It must be just the fragment, not the whole page.
+	for _, unwanted := range []string{"Start sync", "<html", "Field mapping"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("samples fragment unexpectedly contains page chrome %q", unwanted)
+		}
+	}
+}
+
+func TestPreviewSamplesRequiresFormID(t *testing.T) {
+	s := newTestServer(t, &fakeForms{}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/forms/preview/samples", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	s.handlePreviewSamples(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
 func TestStartDuplicateReactivatesExistingStoppedJob(t *testing.T) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
