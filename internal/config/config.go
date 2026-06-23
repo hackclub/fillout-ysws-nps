@@ -41,7 +41,9 @@ type Config struct {
 	// PollInterval is how often each active sync job polls Fillout.
 	PollInterval time.Duration
 
-	// AllowedEmails is the login whitelist, normalized to lowercase.
+	// AllowedEmails is the static login allow-list, normalized to lowercase.
+	// Authorization also accepts emails listed in the YSWS Authors Airtable table
+	// (see auth.Allowlist); this list is the always-available bootstrap.
 	AllowedEmails []string
 	// SessionSecret is the HMAC key used to sign session cookies.
 	SessionSecret []byte
@@ -94,21 +96,6 @@ func loadFrom(lookup func(string) (string, bool)) (*Config, error) {
 // CallbackURL returns the full OAuth callback URL registered with Hack Club.
 func (c *Config) CallbackURL() string {
 	return c.HCAuthCallbackBase + "/callback"
-}
-
-// AllowedEmail reports whether email is on the login whitelist. Comparison is
-// case-insensitive and ignores surrounding whitespace.
-func (c *Config) AllowedEmail(email string) bool {
-	norm := strings.ToLower(strings.TrimSpace(email))
-	if norm == "" {
-		return false
-	}
-	for _, allowed := range c.AllowedEmails {
-		if allowed == norm {
-			return true
-		}
-	}
-	return false
 }
 
 func (c *Config) validate() error {

@@ -56,7 +56,10 @@ func main() {
 	filloutClient := fillout.NewClient(cfg.FilloutAPIKey)
 
 	secureCookies := strings.HasPrefix(cfg.HCAuthCallbackBase, "https://")
-	authn := auth.New(oidc, cfg.SessionSecret, cfg.AllowedEmail, secureCookies)
+	// Login is allowed for ALLOWED_EMAILS plus anyone listed in the YSWS Authors
+	// table's Hack Club Auth Email field (read from Airtable, cached).
+	allowlist := auth.NewAllowlist(cfg.AllowedEmails, airtableClient)
+	authn := auth.New(oidc, cfg.SessionSecret, allowlist.Allowed, secureCookies)
 	mapper := nps.NewMapper(openaiClient)
 	manager := nps.NewManager(store, filloutClient, airtableClient, cfg.PollInterval, nil)
 

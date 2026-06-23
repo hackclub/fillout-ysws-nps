@@ -115,19 +115,3 @@ func TestParseEmails(t *testing.T) {
 		}
 	}
 }
-
-func TestAllowedEmail(t *testing.T) {
-	cfg := &Config{AllowedEmails: []string{"zach@hackclub.com"}}
-	cases := map[string]bool{
-		"zach@hackclub.com":   true,
-		"ZACH@hackclub.com":   true,
-		"  zach@hackclub.com": true,
-		"nope@hackclub.com":   false,
-		"":                    false,
-	}
-	for email, want := range cases {
-		if got := cfg.AllowedEmail(email); got != want {
-			t.Errorf("AllowedEmail(%q) = %v, want %v", email, got, want)
-		}
-	}
-}

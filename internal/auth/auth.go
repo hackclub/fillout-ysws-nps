@@ -176,7 +176,8 @@ func (a *Authenticator) renderForbidden(w http.ResponseWriter, email string) {
 		`<body style="font-family:system-ui;max-width:32rem;margin:4rem auto;text-align:center">` +
 		`<h1>Access denied</h1><p><strong>` + html.EscapeString(email) +
 		`</strong> is not on the allow-list for this tool.</p>` +
-		`<p>Ask an admin to add your email to <code>ALLOWED_EMAILS</code>.</p>` +
+		`<p>Ask an admin to add your email to the <code>Hack Club Auth Email</code> ` +
+		`field in the YSWS Authors table (or to <code>ALLOWED_EMAILS</code>).</p>` +
 		`<p><a href="/logout">Sign out</a></p></body>`))
 }
 
