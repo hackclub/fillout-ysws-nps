@@ -172,6 +172,7 @@ func TestPreviewRendersMappingAndSamples(t *testing.T) {
 		"Boba NPS",            // form name
 		"Recommend?",          // question name in mapping table
 		"Start sync",          // CTA
+		`name="csrf_token"`,   // CSRF token field embedded in the start-sync form
 		nps.StampLine("subZ"), // dedup stamp present in rendered Custom Fields
 		"keep it up",          // catch-all answer rendered in preview
 		// mapping dropdown shows the full NPS column title, not the key "score":
@@ -242,6 +243,66 @@ func TestStartDuplicateReactivatesExistingStoppedJob(t *testing.T) {
 	}
 	if got.Status != db.StatusActive {
 		t.Errorf("status = %q, want %q", got.Status, db.StatusActive)
+	}
+}
+
+func TestNewHTTPServerTimeouts(t *testing.T) {
+	srv := newHTTPServer(":8080", http.NewServeMux())
+	if srv.Addr != ":8080" {
+		t.Errorf("Addr = %q, want :8080", srv.Addr)
+	}
+	if srv.ReadHeaderTimeout <= 0 {
+		t.Error("ReadHeaderTimeout must be set (Slowloris protection)")
+	}
+	if srv.ReadTimeout <= 0 {
+		t.Error("ReadTimeout must be set")
+	}
+	if srv.IdleTimeout <= 0 {
+		t.Error("IdleTimeout must be set")
+	}
+	// WriteTimeout must exceed the OpenAI client's 60s budget so the preview
+	// handler can finish writing its response.
+	if srv.WriteTimeout <= 60*time.Second {
+		t.Errorf("WriteTimeout = %v, want > 60s (must exceed the OpenAI call budget)", srv.WriteTimeout)
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	t.Run("http omits HSTS", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		securityHeaders(next, false).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		h := rec.Header()
+		if h.Get("X-Frame-Options") != "DENY" {
+			t.Errorf("X-Frame-Options = %q, want DENY", h.Get("X-Frame-Options"))
+		}
+		if h.Get("X-Content-Type-Options") != "nosniff" {
+			t.Errorf("X-Content-Type-Options = %q, want nosniff", h.Get("X-Content-Type-Options"))
+		}
+		if !strings.Contains(h.Get("Content-Security-Policy"), "frame-ancestors 'none'") {
+			t.Errorf("CSP missing frame-ancestors 'none': %q", h.Get("Content-Security-Policy"))
+		}
+		if h.Get("Strict-Transport-Security") != "" {
+			t.Errorf("HSTS must not be set on plain HTTP, got %q", h.Get("Strict-Transport-Security"))
+		}
+	})
+
+	t.Run("https sets HSTS", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		securityHeaders(next, true).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		if rec.Header().Get("Strict-Transport-Security") == "" {
+			t.Error("HSTS must be set when served over HTTPS")
+		}
+	})
+}
+
+func TestRoutesAppliesSecurityHeaders(t *testing.T) {
+	s := newTestServer(t, &fakeForms{}, nil)
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Header().Get("X-Frame-Options") != "DENY" {
+		t.Errorf("Routes() did not apply security headers; X-Frame-Options = %q", rec.Header().Get("X-Frame-Options"))
 	}
 }
 

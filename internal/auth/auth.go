@@ -5,10 +5,12 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
 	"html"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +46,7 @@ type pendingAuth struct {
 type session struct {
 	Email     string `json:"email"`
 	ExpiresAt int64  `json:"exp"`
+	CSRFSeed  string `json:"csrf,omitempty"`
 }
 
 // Authenticator wires the Hack Club OIDC client to signed-cookie sessions and an
@@ -118,14 +121,30 @@ func (a *Authenticator) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The email is the sole identity and authorization key, so it must be one
+	// the provider confirms the user controls. An unverified email could be set
+	// to any address; trusting it would let a user log in as any allow-listed
+	// person. Per OIDC, treat the email claim as authoritative only when
+	// email_verified is true.
+	if !info.EmailVerified {
+		a.renderUnverified(w, info.Email)
+		return
+	}
+
 	if !a.allowed(info.Email) {
 		a.renderForbidden(w, info.Email)
+		return
+	}
+	csrfSeed, err := randomToken()
+	if err != nil {
+		http.Error(w, "could not complete login (session setup failed)", http.StatusInternalServerError)
 		return
 	}
 
 	a.setCookie(w, sessionCookie, session{
 		Email:     strings.ToLower(strings.TrimSpace(info.Email)),
 		ExpiresAt: a.now().Add(sessionTTL).Unix(),
+		CSRFSeed:  csrfSeed,
 	}, sessionTTL)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
@@ -137,12 +156,21 @@ func (a *Authenticator) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // RequireUser is middleware that redirects unauthenticated requests to /login
-// and otherwise injects the User into the request context.
+// and otherwise injects the User into the request context. On state-changing
+// (non-safe) methods it also enforces a CSRF token bound to the session.
 func (a *Authenticator) RequireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, ok := a.CurrentUser(r)
+		sess, ok := a.currentSession(r)
 		if !ok {
 			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		user := User{Email: sess.Email}
+		// Defense-in-depth CSRF check on mutating requests; SameSite=Lax cookies
+		// are the first line. The token is derived from the signing key and bound
+		// to the session, so a cross-site form cannot supply a valid one.
+		if !safeMethod(r.Method) && !a.validCSRF(r, sess) {
+			http.Error(w, "invalid or missing CSRF token", http.StatusForbidden)
 			return
 		}
 		ctx := context.WithValue(r.Context(), userCtxKey, user)
@@ -150,14 +178,64 @@ func (a *Authenticator) RequireUser(next http.Handler) http.Handler {
 	})
 }
 
+// safeMethod reports whether m is a read-only HTTP method that needs no CSRF
+// check.
+func safeMethod(m string) bool {
+	switch m {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
+}
+
+// CSRFToken returns the CSRF token bound to the current session, or "" when
+// there is no valid session. Embed it as a hidden "csrf_token" field in every
+// state-changing form; RequireUser rejects unsafe-method requests whose token
+// is missing or does not match.
+func (a *Authenticator) CSRFToken(r *http.Request) string {
+	sess, ok := a.currentSession(r)
+	if !ok {
+		return ""
+	}
+	return a.csrfToken(sess)
+}
+
+// csrfToken derives a stable, unforgeable token for a session from the cookie
+// signing key. It is deterministic for a given session (so any form rendered
+// during the session stays valid) yet unknowable to a cross-site attacker, who
+// lacks the secret — exactly the property CSRF protection needs.
+func (a *Authenticator) csrfToken(sess session) string {
+	email := strings.ToLower(strings.TrimSpace(sess.Email))
+	return encodeSegment(a.signer.mac([]byte("csrf:" + email + ":" + strconv.FormatInt(sess.ExpiresAt, 10) + ":" + sess.CSRFSeed)))
+}
+
+// validCSRF reports whether the request body carries the CSRF token matching
+// sess. The token is read only from the POST body, never the query string.
+func (a *Authenticator) validCSRF(r *http.Request, sess session) bool {
+	got := r.PostFormValue("csrf_token")
+	if got == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(a.csrfToken(sess))) == 1
+}
+
+func (a *Authenticator) currentSession(r *http.Request) (session, bool) {
+	var s session
+	if err := a.readCookie(r, sessionCookie, &s); err != nil {
+		return session{}, false
+	}
+	if s.ExpiresAt < a.now().Unix() || !a.allowed(s.Email) {
+		return session{}, false
+	}
+	return s, true
+}
+
 // CurrentUser returns the logged-in user from the session cookie, if any. It
 // re-checks the whitelist so revoking access takes effect on the next request.
 func (a *Authenticator) CurrentUser(r *http.Request) (User, bool) {
-	var s session
-	if err := a.readCookie(r, sessionCookie, &s); err != nil {
-		return User{}, false
-	}
-	if s.ExpiresAt < a.now().Unix() || !a.allowed(s.Email) {
+	s, ok := a.currentSession(r)
+	if !ok {
 		return User{}, false
 	}
 	return User{Email: s.Email}, true
@@ -170,15 +248,37 @@ func UserFromContext(ctx context.Context) (User, bool) {
 }
 
 func (a *Authenticator) renderForbidden(w http.ResponseWriter, email string) {
+	a.denyLogin(w, email,
+		`is not on the allow-list for this tool.</p>`+
+			`<p>Ask an admin to add your email to the <code>Hack Club Auth Email</code> `+
+			`field in the YSWS Authors table (or to <code>ALLOWED_EMAILS</code>).`)
+}
+
+// renderUnverified denies a login whose email the provider has not verified.
+func (a *Authenticator) renderUnverified(w http.ResponseWriter, email string) {
+	a.denyLogin(w, email,
+		`has not been verified with Hack Club, so it can't be used to sign in.</p>`+
+			`<p>Verify your email address with Hack Club, then try again.`)
+}
+
+// denyLogin writes the shared 403 "access denied" page. reasonHTML is trusted
+// markup describing why access was denied; only email is attacker-influenced,
+// and it is HTML-escaped.
+func (a *Authenticator) denyLogin(w http.ResponseWriter, email, reasonHTML string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
 	_, _ = w.Write([]byte(`<!doctype html><meta charset="utf-8"><title>Access denied</title>` +
 		`<body style="font-family:system-ui;max-width:32rem;margin:4rem auto;text-align:center">` +
-		`<h1>Access denied</h1><p><strong>` + html.EscapeString(email) +
-		`</strong> is not on the allow-list for this tool.</p>` +
-		`<p>Ask an admin to add your email to the <code>Hack Club Auth Email</code> ` +
-		`field in the YSWS Authors table (or to <code>ALLOWED_EMAILS</code>).</p>` +
-		`<p><a href="/logout">Sign out</a></p></body>`))
+		`<h1>Access denied</h1><p><strong>` + html.EscapeString(email) + `</strong> ` + reasonHTML +
+		`</p><p><a href="/logout">Sign out</a></p></body>`))
+}
+
+func randomToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return encodeSegment(b), nil
 }
 
 func (a *Authenticator) setCookie(w http.ResponseWriter, name string, v any, ttl time.Duration) {

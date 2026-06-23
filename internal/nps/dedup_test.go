@@ -53,3 +53,15 @@ func TestFindStampedRecords_RealStampFormat(t *testing.T) {
 			subID, got, "recABC", customStr)
 	}
 }
+
+// TestDedupFormula_EscapesValue ensures a submission ID containing a double
+// quote is escaped as an Airtable string literal rather than breaking out of it
+// (formula injection). Submission IDs are Fillout-generated today, so this is
+// defense-in-depth against the source ever changing.
+func TestDedupFormula_EscapesValue(t *testing.T) {
+	got := dedupFormula(`evil"`)
+	want := `FIND("Fillout Submission: evil\"", {Custom Fields})`
+	if got != want {
+		t.Errorf("dedupFormula(%q) = %q, want %q", `evil"`, got, want)
+	}
+}

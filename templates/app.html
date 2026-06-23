@@ -358,11 +358,13 @@
         {{if .LastError}}<div class="errnote">⚠ {{.LastError}}</div>{{end}}
         {{if .Running}}
         <form method="post" action="/sync/stop" style="margin:0">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           <input type="hidden" name="job_id" value="{{.ID}}">
           <button class="btn danger" type="submit">Stop sync</button>
         </form>
         {{else}}
         <form method="post" action="/sync/resume" style="margin:0">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           <input type="hidden" name="job_id" value="{{.ID}}">
           <button class="btn secondary" type="submit">Resume</button>
         </form>
@@ -403,6 +405,7 @@
     </div>
 
     <form method="post" action="/sync/remove">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <input type="hidden" name="job_id" value="{{.JobID}}">
       {{if .Created}}
       <label class="checkbox">
@@ -432,6 +435,7 @@
     <h1>Set up a new form</h1>
     <p class="lede">Paste a Fillout form link or its ID. We'll fetch the questions and a few real submissions, then use AI to map each question onto the NPS table for you to review.</p>
     <form method="post" action="/forms/preview">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <label class="field" for="form_input">Fillout form link or ID</label>
       <input type="text" id="form_input" name="form_input" placeholder="forms.fillout.com/t/…  ·  build.fillout.com/editor/…  ·  or the form ID" value="{{.FormInput}}" required autofocus>
       <p class="helptext">We accept the public form link, the editor link, or a bare form ID.</p>
@@ -451,6 +455,7 @@
 <main class="stack">
   {{if .Error}}<div class="notice error"><span class="ic">!</span><span>{{.Error}}</span></div>{{end}}
   <form method="post" action="/sync/start">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <input type="hidden" name="form_id" value="{{.FormID}}">
     <input type="hidden" name="form_name" value="{{.FormName}}">
 

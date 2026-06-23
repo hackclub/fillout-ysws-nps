@@ -77,7 +77,31 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /sync/remove", s.auth.RequireUser(http.HandlerFunc(s.handleRemoveConfirm)))
 	mux.Handle("POST /sync/remove", s.auth.RequireUser(http.HandlerFunc(s.handleRemove)))
 	mux.Handle("GET /audit", s.auth.RequireUser(http.HandlerFunc(s.handleAudit)))
-	return mux
+	return securityHeaders(mux, strings.HasPrefix(s.cfg.HCAuthCallbackBase, "https://"))
+}
+
+// securityHeaders wraps h with conservative, app-wide security response headers.
+// HSTS is sent only when the app is served over HTTPS (https), so it never
+// pins plain-HTTP local dev. The CSP allows the inline <style>/<script> the
+// templates use plus the Hack Club asset host, and forbids framing.
+func securityHeaders(h http.Handler, https bool) http.Handler {
+	const csp = "default-src 'self'; " +
+		"img-src 'self' https://assets.hackclub.com data:; " +
+		"font-src https://assets.hackclub.com; " +
+		"style-src 'self' 'unsafe-inline'; " +
+		"script-src 'self' 'unsafe-inline'; " +
+		"frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		head := w.Header()
+		head.Set("X-Content-Type-Options", "nosniff")
+		head.Set("X-Frame-Options", "DENY")
+		head.Set("Content-Security-Policy", csp)
+		head.Set("Referrer-Policy", "same-origin")
+		if https {
+			head.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 func handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +115,8 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 type baseView struct {
 	Title     string
 	UserEmail string
+	// CSRF is the per-session CSRF token embedded in every state-changing form.
+	CSRF string
 }
 
 type messageView struct {
@@ -205,7 +231,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, "page_dashboard", dashboardView{
-		baseView: baseView{Title: "Dashboard", UserEmail: user.Email},
+		baseView: baseView{Title: "Dashboard", UserEmail: user.Email, CSRF: s.auth.CSRFToken(r)},
 		Flash:    r.URL.Query().Get("flash"),
 		Jobs:     rows,
 	})
@@ -588,7 +614,7 @@ func tagsSummary(tags string) string {
 
 func (s *Server) base(r *http.Request, title string) baseView {
 	user, _ := s.auth.CurrentUser(r)
-	return baseView{Title: title, UserEmail: user.Email}
+	return baseView{Title: title, UserEmail: user.Email, CSRF: s.auth.CSRFToken(r)}
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {

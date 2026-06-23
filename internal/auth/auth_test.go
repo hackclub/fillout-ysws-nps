@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,8 +15,9 @@ import (
 func allowAll(string) bool { return true }
 
 // stubOIDC stands up a fake Hack Club token + userinfo server and returns an
-// hcauth client pointed at it. The userinfo endpoint reports the given email.
-func stubOIDC(t *testing.T, email string) (*hcauth.Client, *httptest.Server) {
+// hcauth client pointed at it. The userinfo endpoint reports the given email
+// and email_verified flag.
+func stubOIDC(t *testing.T, email string, emailVerified bool) (*hcauth.Client, *httptest.Server) {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
@@ -29,8 +31,9 @@ func stubOIDC(t *testing.T, email string) (*hcauth.Client, *httptest.Server) {
 	mux.HandleFunc("/oauth/userinfo", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"sub":   "user-sub-1",
-			"email": email,
+			"sub":            "user-sub-1",
+			"email":          email,
+			"email_verified": emailVerified,
 		})
 	})
 	srv := httptest.NewServer(mux)
@@ -147,7 +150,7 @@ func TestCallback_StateMismatch(t *testing.T) {
 }
 
 func TestCallback_HappyPathSetsSession(t *testing.T) {
-	oidc, _ := stubOIDC(t, "zach@hackclub.com")
+	oidc, _ := stubOIDC(t, "zach@hackclub.com", true)
 	a := New(oidc, []byte("secret"), allowAll, false)
 
 	// Drive Login to get a matching pending cookie + state.
@@ -177,13 +180,23 @@ func TestCallback_HappyPathSetsSession(t *testing.T) {
 	if loc := out.Header().Get("Location"); loc != "/" {
 		t.Errorf("Location = %q, want /", loc)
 	}
-	if cookieByName(out.Result(), sessionCookie) == nil {
+	sessCookie := cookieByName(out.Result(), sessionCookie)
+	if sessCookie == nil {
 		t.Error("no session cookie set on success")
+	}
+	var sess session
+	reqWithSession := httptest.NewRequest(http.MethodGet, "/", nil)
+	reqWithSession.AddCookie(sessCookie)
+	if err := a.readCookie(reqWithSession, sessionCookie, &sess); err != nil {
+		t.Fatalf("read session cookie: %v", err)
+	}
+	if sess.CSRFSeed == "" {
+		t.Error("session cookie has empty CSRF seed")
 	}
 }
 
 func TestCallback_DisallowedEmailForbidden(t *testing.T) {
-	oidc, _ := stubOIDC(t, "stranger@example.com")
+	oidc, _ := stubOIDC(t, "stranger@example.com", true)
 	a := New(oidc, []byte("secret"), func(e string) bool { return e == "zach@hackclub.com" }, false)
 
 	loginRec := httptest.NewRecorder()
@@ -202,5 +215,142 @@ func TestCallback_DisallowedEmailForbidden(t *testing.T) {
 	}
 	if cookieByName(out.Result(), sessionCookie) != nil {
 		t.Error("session cookie set for disallowed email")
+	}
+}
+
+func TestCallback_UnverifiedEmailForbidden(t *testing.T) {
+	// allowAll would otherwise admit this email; the unverified flag must win.
+	oidc, _ := stubOIDC(t, "zach@hackclub.com", false)
+	a := New(oidc, []byte("secret"), allowAll, false)
+
+	loginRec := httptest.NewRecorder()
+	a.Login(loginRec, httptest.NewRequest(http.MethodGet, "/login", nil))
+	pending := cookieByName(loginRec.Result(), pendingCookie)
+	loc, _ := url.Parse(loginRec.Header().Get("Location"))
+	state := loc.Query().Get("state")
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?state="+state+"&code=auth-code", nil)
+	req.AddCookie(pending)
+	out := httptest.NewRecorder()
+	a.Callback(out, req)
+
+	if out.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (unverified email must be rejected)", out.Code)
+	}
+	if cookieByName(out.Result(), sessionCookie) != nil {
+		t.Error("session cookie set for unverified email")
+	}
+}
+
+func testSession(email, seed string) session {
+	return session{Email: email, ExpiresAt: time.Now().Add(time.Hour).Unix(), CSRFSeed: seed}
+}
+
+func cookieForSession(t *testing.T, a *Authenticator, sess session) *http.Cookie {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	a.setCookie(rec, sessionCookie, sess, sessionTTL)
+	c := cookieByName(rec.Result(), sessionCookie)
+	if c == nil {
+		t.Fatal("no session cookie forged")
+	}
+	return c
+}
+
+func TestRequireUser_EnforcesCSRFOnPOST(t *testing.T) {
+	a := New(nil, []byte("secret"), allowAll, false)
+	const email = "zach@hackclub.com"
+	sess := testSession(email, "csrf-seed-1")
+	sessCookie := cookieForSession(t, a, sess)
+
+	var ran bool
+	handler := a.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { ran = true }))
+
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/sync/stop", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(sessCookie)
+		rec := httptest.NewRecorder()
+		ran = false
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("missing token rejected", func(t *testing.T) {
+		rec := post("job_id=1")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", rec.Code)
+		}
+		if ran {
+			t.Error("next handler ran despite missing CSRF token")
+		}
+	})
+
+	t.Run("wrong token rejected", func(t *testing.T) {
+		rec := post("csrf_token=not-the-token&job_id=1")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", rec.Code)
+		}
+		if ran {
+			t.Error("next handler ran despite wrong CSRF token")
+		}
+	})
+
+	t.Run("valid token accepted", func(t *testing.T) {
+		rec := post("csrf_token=" + url.QueryEscape(a.csrfToken(sess)) + "&job_id=1")
+		if rec.Code == http.StatusForbidden {
+			t.Fatalf("valid CSRF token rejected (status %d)", rec.Code)
+		}
+		if !ran {
+			t.Error("next handler did not run with a valid CSRF token")
+		}
+	})
+
+	t.Run("query-string token rejected", func(t *testing.T) {
+		// The token must come from the request body, not the URL query.
+		req := httptest.NewRequest(http.MethodPost, "/sync/stop?csrf_token="+url.QueryEscape(a.csrfToken(sess)), strings.NewReader("job_id=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(sessCookie)
+		rec := httptest.NewRecorder()
+		ran = false
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 (query-string token must not be accepted)", rec.Code)
+		}
+	})
+}
+
+func TestRequireUser_BindsCSRFToSession(t *testing.T) {
+	a := New(nil, []byte("secret"), allowAll, false)
+	const email = "zach@hackclub.com"
+	sessA := testSession(email, "csrf-seed-a")
+	sessB := testSession(email, "csrf-seed-b")
+	cookieB := cookieForSession(t, a, sessB)
+
+	if a.csrfToken(sessA) == a.csrfToken(sessB) {
+		t.Fatal("CSRF token did not change between sessions for the same user")
+	}
+
+	var ran bool
+	handler := a.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { ran = true }))
+	req := httptest.NewRequest(http.MethodPost, "/sync/stop", strings.NewReader("csrf_token="+url.QueryEscape(a.csrfToken(sessA))+"&job_id=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookieB)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for token from different session", rec.Code)
+	}
+	if ran {
+		t.Error("next handler ran with a CSRF token from a different session")
+	}
+}
+
+func TestCSRFToken_EmptyWithoutSession(t *testing.T) {
+	a := New(nil, []byte("secret"), allowAll, false)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	if tok := a.CSRFToken(req); tok != "" {
+		t.Errorf("CSRFToken without session = %q, want empty", tok)
 	}
 }

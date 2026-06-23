@@ -26,9 +26,11 @@ type AirtableAPI interface {
 }
 
 // dedupFormula builds an Airtable filterByFormula that matches records already
-// stamped with this submission's dedup marker in the Custom Fields field.
+// stamped with this submission's dedup marker in the Custom Fields field. The
+// stamp value is escaped as an Airtable string literal so a submission ID can
+// never break out of the literal or inject formula syntax.
 func dedupFormula(submissionID string) string {
-	return fmt.Sprintf("FIND(%q, {%s})", StampLine(submissionID), FieldCustomFields)
+	return fmt.Sprintf("FIND(%s, {%s})", airtable.QuoteString(StampLine(submissionID)), FieldCustomFields)
 }
 
 // FindStampedRecords looks up, in batched Airtable queries, which of the given
@@ -47,7 +49,7 @@ func FindStampedRecords(ctx context.Context, at AirtableAPI, table string, submi
 		terms := make([]string, len(chunk))
 		for i, id := range chunk {
 			want[id] = true
-			terms[i] = fmt.Sprintf("FIND(%q, {%s})", StampLine(id), FieldCustomFields)
+			terms[i] = dedupFormula(id)
 		}
 		records, err := at.ListRecords(ctx, table, &airtable.ListOptions{
 			FilterByFormula: "OR(" + strings.Join(terms, ",") + ")",

@@ -16,6 +16,12 @@ const DefaultPollInterval = 30 * time.Second
 // DefaultNPSTable is the Airtable table written to when NPS_TABLE is unset.
 const DefaultNPSTable = "NPS"
 
+// minSessionSecretLen is the smallest accepted SESSION_SECRET, in bytes. The
+// secret keys the HMAC that protects every session cookie, so a short one
+// weakens forgery resistance. 16 bytes (128 bits) is the floor; the .env.example
+// recommends 32 random bytes.
+const minSessionSecretLen = 16
+
 // Config holds all runtime configuration. Build it with Load.
 type Config struct {
 	// Port is the HTTP port the server listens on (PORT, default 8080).
@@ -124,6 +130,11 @@ func (c *Config) validate() error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("config: missing required environment variables: %s", strings.Join(missing, ", "))
+	}
+	// SessionSecret is non-empty here (else it was reported missing above); make
+	// sure it is long enough to be a usable HMAC key.
+	if n := len(c.SessionSecret); n < minSessionSecretLen {
+		return fmt.Errorf("config: SESSION_SECRET must be at least %d bytes, got %d; generate one with: head -c 32 /dev/urandom | base64", minSessionSecretLen, n)
 	}
 	return nil
 }

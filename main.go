@@ -72,10 +72,7 @@ func main() {
 		log.Fatalf("server: %v", err)
 	}
 
-	httpServer := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: server.Routes(),
-	}
+	httpServer := newHTTPServer(":"+cfg.Port, server.Routes())
 
 	go func() {
 		<-ctx.Done()
@@ -91,6 +88,23 @@ func main() {
 		log.Fatalf("server error: %v", err)
 	}
 	log.Print("bye")
+}
+
+// newHTTPServer builds the application's http.Server with timeouts that bound
+// how long a client may hold a connection, mitigating Slowloris-style attacks
+// and leaked idle connections. ReadHeaderTimeout and ReadTimeout cap slow
+// request reads; IdleTimeout caps keep-alive sockets. WriteTimeout is generous
+// because the preview handler makes a synchronous OpenAI call (its client
+// allows up to 60s) before writing the response — it must exceed that.
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       20 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 }
 
 // port returns the configured HTTP port, defaulting to 8080. It is retained for

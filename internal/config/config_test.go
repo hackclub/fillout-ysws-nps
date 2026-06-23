@@ -16,7 +16,7 @@ func fullEnv() map[string]string {
 		"OPENAI_API_KEY":            "sk_openai",
 		"AIRTABLE_API_KEY":          "key_airtable",
 		"AIRTABLE_BASE_ID":          "appTest",
-		"SESSION_SECRET":            "supersecret",
+		"SESSION_SECRET":            "0123456789abcdef0123456789abcdef",
 		"DATABASE_URL":              "postgres://app:app@localhost:5432/app",
 		"ALLOWED_EMAILS":            "zach@hackclub.com",
 	}
@@ -90,6 +90,18 @@ func TestLoadFrom_MissingRequired(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
+	}
+}
+
+func TestLoadFrom_ShortSessionSecret(t *testing.T) {
+	env := fullEnv()
+	env["SESSION_SECRET"] = "tooshort" // 8 bytes, below the 16-byte minimum
+	_, err := loadFrom(lookupFrom(env))
+	if err == nil {
+		t.Fatal("expected error for short SESSION_SECRET, got nil")
+	}
+	if !strings.Contains(err.Error(), "SESSION_SECRET") {
+		t.Errorf("error %q does not mention SESSION_SECRET", err)
 	}
 }
 
