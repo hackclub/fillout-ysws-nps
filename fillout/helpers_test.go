@@ -18,12 +18,13 @@ type recordedRequest struct {
 
 // newTestClient spins up an httptest server backed by handler and returns a
 // Client pointed at it. The server is closed via t.Cleanup. The rate limiter is
-// disabled so tests don't pay limiter latency unless they opt in.
+// disabled, and 429 retries are off, so tests don't pay limiter or backoff
+// latency unless they opt in (e.g. via WithMaxRetries).
 func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return NewClient("test-key", WithBaseURL(srv.URL), WithRateLimit(0, 0))
+	return NewClient("test-key", WithBaseURL(srv.URL), WithRateLimit(0, 0), WithMaxRetries(0))
 }
 
 // jsonHandler responds with status and the given JSON body, recording the
