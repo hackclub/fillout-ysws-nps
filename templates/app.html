@@ -264,6 +264,26 @@
 {{end}}
 
 {{define "foot"}}
+<script>
+  // Localize any <time data-localtime> to the viewer's timezone. The server
+  // emits an absolute UTC instant in the datetime attribute and a UTC fallback
+  // as the text; here we swap the text for the local-zone rendering. Leaving the
+  // UTC text in place on parse failure keeps the value correct, just not local.
+  (function () {
+    var els = document.querySelectorAll('time[data-localtime]');
+    for (var i = 0; i < els.length; i++) {
+      var iso = els[i].getAttribute('datetime');
+      if (!iso) continue;
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) continue;
+      els[i].textContent = d.toLocaleString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit', timeZoneName: 'short'
+      });
+      els[i].title = d.toString();
+    }
+  })();
+</script>
 </body>
 </html>
 {{end}}
@@ -353,7 +373,7 @@
       <div class="job-side">
         {{if .Running}}<span class="pill running"><span class="dot"></span>Running</span>
         {{else}}<span class="pill stopped"><span class="dot"></span>{{.Status}}</span>{{end}}
-        <div class="small muted">Last poll {{.LastPolled}}</div>
+        <div class="small muted">Last poll {{if .LastPolledISO}}<time datetime="{{.LastPolledISO}}" data-localtime>{{.LastPolled}}</time>{{else}}{{.LastPolled}}{{end}}</div>
         <div class="small muted">Set up by {{.CreatedBy}}</div>
         {{if .LastError}}<div class="errnote">⚠ {{.LastError}}</div>{{end}}
         {{if .Running}}

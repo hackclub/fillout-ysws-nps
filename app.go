@@ -139,21 +139,24 @@ type dashboardView struct {
 }
 
 type jobRow struct {
-	ID         int64
-	FormName   string
-	FormID     string
-	BaseID     string
-	Table      string
-	YSWS       string
-	Tags       string
-	CreatedBy  string
-	Status     string
-	Running    bool
-	Created    int
-	Skipped    int
-	Errored    int
-	LastPolled string
-	LastError  string
+	ID        int64
+	FormName  string
+	FormID    string
+	BaseID    string
+	Table     string
+	YSWS      string
+	Tags      string
+	CreatedBy string
+	Status    string
+	Running   bool
+	Created   int
+	Skipped   int
+	Errored   int
+	// LastPolled is the no-JS fallback text (UTC). LastPolledISO is the same
+	// instant as an RFC3339 UTC value the browser localizes to the viewer's zone.
+	LastPolled    string
+	LastPolledISO string
+	LastError     string
 }
 
 type previewView struct {
@@ -219,21 +222,22 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rows = append(rows, jobRow{
-			ID:         j.ID,
-			FormName:   j.FilloutFormName,
-			FormID:     j.FilloutFormID,
-			BaseID:     j.AirtableBaseID,
-			Table:      j.AirtableTable,
-			YSWS:       j.YSWSProgram,
-			Tags:       j.Tags,
-			CreatedBy:  j.CreatedByEmail,
-			Status:     j.Status,
-			Running:    s.manager.IsRunning(j.ID),
-			Created:    stats.Created,
-			Skipped:    stats.SkippedExisting,
-			Errored:    stats.Errored,
-			LastPolled: formatTime(j.LastPolledAt),
-			LastError:  j.LastError,
+			ID:            j.ID,
+			FormName:      j.FilloutFormName,
+			FormID:        j.FilloutFormID,
+			BaseID:        j.AirtableBaseID,
+			Table:         j.AirtableTable,
+			YSWS:          j.YSWSProgram,
+			Tags:          j.Tags,
+			CreatedBy:     j.CreatedByEmail,
+			Status:        j.Status,
+			Running:       s.manager.IsRunning(j.ID),
+			Created:       stats.Created,
+			Skipped:       stats.SkippedExisting,
+			Errored:       stats.Errored,
+			LastPolled:    formatTime(j.LastPolledAt),
+			LastPolledISO: isoTime(j.LastPolledAt),
+			LastError:     j.LastError,
 		})
 	}
 
@@ -715,11 +719,24 @@ func formatValue(v any) string {
 	}
 }
 
+// formatTime renders the no-JS fallback for a timestamp. The zone is named
+// explicitly (UTC) so a viewer without JavaScript is not misled into reading
+// server time as their own local time; the client localizes it when JS runs.
 func formatTime(t *time.Time) string {
 	if t == nil {
 		return "never"
 	}
-	return t.Format("2006-01-02 15:04")
+	return t.UTC().Format("2006-01-02 15:04 UTC")
+}
+
+// isoTime renders a timestamp as an RFC3339 UTC value: an absolute instant the
+// browser can localize to the viewer's timezone. It returns "" for a nil time so
+// the template can omit the <time> element entirely.
+func isoTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func orDefault(s, fallback string) string {
