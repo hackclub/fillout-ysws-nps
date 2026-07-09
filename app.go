@@ -454,8 +454,11 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	created, err := s.store.CreateJob(r.Context(), job)
 	if errors.Is(err, db.ErrJobExists) {
-		// Gracefully handle a sync that's already set up (possibly by someone
-		// else): make sure it's running and explain rather than duplicating.
+		// Gracefully handle a sync that's already set up: authorized managers can
+		// make sure it's running and explain rather than duplicating.
+		if _, ok := s.requireCanManageJob(w, r, created); !ok {
+			return
+		}
 		if err := s.store.SetJobStatus(r.Context(), created.ID, db.StatusActive); err != nil {
 			s.serverError(w, "reactivating existing sync job", err)
 			return

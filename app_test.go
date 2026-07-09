@@ -315,6 +315,70 @@ func TestStartDuplicateReactivatesExistingStoppedJob(t *testing.T) {
 	}
 }
 
+func TestNonOwnerCannotReactivateDuplicateSync(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL not set; skipping db integration test")
+	}
+	ctx := context.Background()
+	database, err := db.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(database.Close)
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	formID := "form-duplicate-forbidden-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	existing, err := database.CreateJob(ctx, &db.SyncJob{
+		FilloutFormID:   formID,
+		FilloutFormName: "Existing Form",
+		AirtableBaseID:  "appTest",
+		AirtableTable:   "NPS",
+		Mapping:         json.RawMessage(`{"entries":[{"question_id":"q_score","target":"score"}]}`),
+		YSWSProgram:     "Boba Drops",
+		CreatedByEmail:  "owner@example.com",
+		Status:          db.StatusStopped,
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	fc := &fakeForms{meta: &fillout.FormMetadata{
+		Name:      "Existing Form",
+		Questions: []fillout.QuestionDef{{ID: "q_score", Name: "Recommend?", Type: fillout.QuestionOpinionScale}},
+	}}
+	at := &fakeAirtable{programs: []string{"Boba Drops"}}
+	manager := nps.NewManager(database, fc, at, time.Hour, nil)
+	t.Cleanup(manager.Shutdown)
+	s, err := NewServer(&config.Config{AirtableBaseID: "appTest", NPSTable: "NPS", AdminEmails: []string{"admin@example.com"}}, auth.New(nil, []byte("secret"), func(string) bool { return true }, false), database, fc, at, nil, manager)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	form := strings.NewReader("form_id=" + formID + "&ysws_program=Boba+Drops&target_q_score=score")
+	req := httptest.NewRequest(http.MethodPost, "/sync/start", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = withUser(req, "other@example.com")
+	rec := httptest.NewRecorder()
+	s.handleStart(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d; body:\n%s", rec.Code, rec.Body.String())
+	}
+	got, err := database.GetJob(ctx, existing.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Status != db.StatusStopped {
+		t.Fatalf("status = %q, want %q", got.Status, db.StatusStopped)
+	}
+	if s.manager.IsRunning(existing.ID) {
+		t.Fatal("forbidden duplicate start reactivated the poller")
+	}
+}
+
 func TestStartUsesRefetchedFilloutFormName(t *testing.T) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
