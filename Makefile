@@ -1,4 +1,4 @@
-.PHONY: help up down logs ps restart test psql
+.PHONY: help up down logs ps restart test vet psql
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -19,8 +19,15 @@ ps: ## Show running services
 restart: ## Restart the app container
 	docker compose restart app
 
-test: ## Run the Go test suite on the host
+test: ## Run the Go test suites on the host
 	go test ./...
+	cd fillout && go test ./...
+	cd airtable && go test ./...
+
+vet: ## Run go vet across all modules
+	go vet ./...
+	cd fillout && go vet ./...
+	cd airtable && go vet ./...
 
 psql: ## Open a psql shell in the db container
 	docker compose exec db psql -U $${POSTGRES_USER:-app} -d $${POSTGRES_DB:-app}

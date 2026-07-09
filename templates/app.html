@@ -6,240 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} · Hack Club</title>
   <link rel="icon" href="https://assets.hackclub.com/icon-rounded.svg">
-  <style>
-    /* ── Phantom Sans: the Hack Club brand typeface ───────────────────── */
-    @font-face {
-      font-family: 'Phantom Sans';
-      src: url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Regular.woff2') format('woff2'),
-           url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Regular.woff') format('woff');
-      font-weight: 400; font-style: normal; font-display: swap;
-    }
-    @font-face {
-      font-family: 'Phantom Sans';
-      src: url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Italic.woff2') format('woff2'),
-           url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Italic.woff') format('woff');
-      font-weight: 400; font-style: italic; font-display: swap;
-    }
-    @font-face {
-      font-family: 'Phantom Sans';
-      src: url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Bold.woff2') format('woff2'),
-           url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Bold.woff') format('woff');
-      font-weight: 700; font-style: normal; font-display: swap;
-    }
-
-    /* ── Hack Club brand tokens ───────────────────────────────────────── */
-    :root {
-      --snow:#f9fafc; --white:#ffffff; --smoke:#e0e6ed; --smoke-soft:#eef1f5;
-      --muted:#8492a6; --slate:#3c4858; --dark:#1f2d3d;
-      --red:#ec3750; --orange:#ff8c37; --yellow:#f1c40f; --green:#33d6a6;
-      --cyan:#5bc0de; --blue:#338eda; --purple:#a633d6;
-      --grad:linear-gradient(90deg,#ec3750 0%,#ff8c37 100%);
-      --sans:'Phantom Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
-      --mono:ui-monospace,'SF Mono',SFMono-Regular,'JetBrains Mono',Menlo,monospace;
-      --radius:16px; --radius-sm:10px; --radius-pill:999px;
-      --shadow:0 1px 2px rgba(31,45,61,.05),0 8px 28px rgba(31,45,61,.07);
-      --shadow-lift:0 2px 6px rgba(31,45,61,.07),0 18px 44px rgba(31,45,61,.12);
-      --ring:0 0 0 3px rgba(51,142,218,.35);
-    }
-    * { box-sizing: border-box; }
-    html { -webkit-text-size-adjust: 100%; }
-    body {
-      margin: 0; min-height: 100vh;
-      font-family: var(--sans);
-      font-size: 17px; line-height: 1.6;
-      color: var(--dark); background: var(--snow);
-      -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
-    }
-    /* The Hack Club signature gradient, used as a hairline accent, not a wash. */
-    .brandbar { height: 4px; background: var(--grad); }
-
-    a { color: var(--blue); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    h1,h2,h3 { line-height: 1.2; letter-spacing: -0.02em; margin: 0; }
-    h1 { font-size: 2rem; font-weight: 700; }
-    h2 { font-size: 1.3rem; font-weight: 700; }
-    p { margin: 0.5rem 0 0; }
-    code,pre,.mono { font-family: var(--mono); }
-    :focus-visible { outline: none; box-shadow: var(--ring); border-radius: 6px; }
-
-    /* ── App bar ──────────────────────────────────────────────────────── */
-    .appbar {
-      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-      padding: 0.85rem 1.5rem; background: var(--white);
-      border-bottom: 1px solid var(--smoke); flex-wrap: wrap;
-    }
-    .appbar .brand { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
-    .appbar .brand img { height: 30px; width: auto; display: block; }
-    .appbar .wordmark { font-weight: 700; font-size: 1.05rem; color: var(--dark); white-space: nowrap; }
-    .appbar .wordmark .arrow { color: var(--red); }
-    .appbar nav { display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
-    .appbar nav a.navlink { color: var(--slate); font-weight: 600; font-size: 0.95rem; }
-    .appbar nav a.navlink:hover { color: var(--dark); text-decoration: none; }
-    .appbar .who { color: var(--muted); font-size: 0.85rem; font-family: var(--mono); }
-    .appbar .who::before { content: ''; display: inline-block; width: 7px; height: 7px;
-      border-radius: 50%; background: var(--green); margin-right: 0.4rem; vertical-align: middle; }
-
-    /* ── Layout ───────────────────────────────────────────────────────── */
-    main { max-width: 64rem; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
-    .stack > * + * { margin-top: 1.25rem; }
-    .eyebrow { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.12em;
-      text-transform: uppercase; color: var(--red); margin: 0 0 0.5rem; }
-    .lede { color: var(--slate); max-width: 46rem; }
-    .muted { color: var(--muted); }
-    .small { font-size: 0.85rem; }
-
-    /* ── Cards ────────────────────────────────────────────────────────── */
-    .card { background: var(--white); border: 1px solid var(--smoke);
-      border-radius: var(--radius); padding: 1.6rem; box-shadow: var(--shadow); }
-    .card + .card { margin-top: 1.25rem; }
-    .card h1 + .lede, .card h2 + .lede { margin-top: 0.35rem; }
-
-    /* ── Buttons ──────────────────────────────────────────────────────── */
-    .btn { display: inline-flex; align-items: center; gap: 0.45rem; cursor: pointer;
-      font-family: var(--sans); font-size: 1rem; font-weight: 700; line-height: 1;
-      padding: 0.7rem 1.2rem; border-radius: var(--radius-pill); border: 1px solid transparent;
-      text-decoration: none; transition: transform .08s ease, box-shadow .15s ease, background .15s ease; }
-    .btn:hover { text-decoration: none; }
-    .btn:active { transform: translateY(1px); }
-    .btn.primary { background: var(--red); color: #fff; box-shadow: 0 6px 16px rgba(236,55,80,.28); }
-    .btn.primary:hover { background: #d92e46; box-shadow: 0 8px 22px rgba(236,55,80,.34); }
-    .btn.secondary { background: var(--white); color: var(--slate); border-color: var(--smoke); }
-    .btn.secondary:hover { border-color: var(--muted); color: var(--dark); }
-    .btn.ghost { background: transparent; color: var(--slate); border-color: var(--smoke); padding: 0.5rem 0.95rem; font-size: 0.9rem; }
-    .btn.ghost:hover { border-color: var(--muted); color: var(--dark); }
-    .btn.danger { background: #fff; color: var(--red); border-color: rgba(236,55,80,.35); padding: 0.5rem 0.95rem; font-size: 0.9rem; }
-    .btn.danger:hover { background: var(--red); color: #fff; border-color: var(--red); }
-    .btn-row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
-
-    /* ── Forms ────────────────────────────────────────────────────────── */
-    label.field { display: block; font-weight: 700; color: var(--dark);
-      margin: 1.1rem 0 0.4rem; font-size: 0.95rem; }
-    label.field .hint { font-weight: 500; color: var(--muted); }
-    input[type=text], textarea, select {
-      width: 100%; padding: 0.7rem 0.85rem; font-size: 1rem; font-family: var(--sans);
-      color: var(--dark); background: var(--white);
-      border: 1px solid var(--smoke); border-radius: var(--radius-sm); transition: border-color .15s, box-shadow .15s; }
-    input[type=text]:focus, textarea:focus, select:focus { border-color: var(--blue); box-shadow: var(--ring); outline: none; }
-    input::placeholder { color: #aab4c2; }
-    .helptext { margin: 0.45rem 0 0; color: var(--muted); font-size: 0.85rem; }
-    .helptext code { background: var(--smoke-soft); padding: 0.05rem 0.3rem; border-radius: 5px; font-size: 0.85em; }
-
-    /* ── Pipeline / flow signature ────────────────────────────────────── */
-    .flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
-    .flow-node { flex: 1 1 240px; min-width: 0; padding: 0.9rem 1.1rem;
-      border: 1px solid var(--smoke); border-radius: var(--radius-sm); background: var(--snow); }
-    .flow-node .role { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em;
-      text-transform: uppercase; color: var(--muted); margin-bottom: 0.25rem; }
-    .flow-node .title { font-weight: 700; color: var(--dark); word-break: break-word; }
-    .flow-node .sub { color: var(--muted); font-size: 0.82rem; margin-top: 0.15rem; font-family: var(--mono); overflow-wrap: anywhere; }
-    .flow-arrow { display: flex; align-items: center; justify-content: center; padding: 0 0.85rem; color: var(--orange); }
-    .flow-arrow svg { width: 30px; height: 18px; display: block; }
-    @media (max-width: 640px) {
-      .flow { flex-direction: column; }
-      /* In a column the flex-basis would become the node's height; reset it so
-         nodes size to their content instead of stretching to 240px tall. */
-      .flow-node { flex: 1 1 auto; }
-      .flow-arrow { padding: 0.45rem 0; transform: rotate(90deg); }
-    }
-
-    /* ── Pills & status ───────────────────────────────────────────────── */
-    .pill { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.65rem;
-      border-radius: var(--radius-pill); font-size: 0.78rem; font-weight: 700;
-      background: var(--smoke-soft); color: var(--slate); }
-    .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-    .pill.running { background: rgba(51,214,166,.16); color: #0f7a5a; }
-    .pill.stopped { background: var(--smoke-soft); color: var(--muted); }
-    .pill.tag { background: rgba(166,51,214,.12); color: #7d23a6; font-weight: 600; font-family: var(--mono); font-size: 0.74rem; }
-
-    /* Inline metrics with colored markers. */
-    .metrics { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; align-items: center; }
-    .metric { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--slate); }
-    .metric b { color: var(--dark); }
-    .metric .mk { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-    .mk.created { background: var(--green); }
-    .mk.skipped { background: var(--muted); }
-    .mk.errored { background: var(--red); }
-
-    /* ── Job rows ─────────────────────────────────────────────────────── */
-    .job { display: grid; grid-template-columns: 1fr auto; gap: 1.1rem 1.5rem; align-items: start;
-      padding: 1.25rem; border: 1px solid var(--smoke); border-radius: var(--radius);
-      background: var(--white); box-shadow: var(--shadow); transition: box-shadow .15s ease, transform .1s ease; }
-    .job + .job { margin-top: 0.9rem; }
-    .job:hover { box-shadow: var(--shadow-lift); }
-    .job-main { min-width: 0; }
-    .job-foot { display: flex; flex-wrap: wrap; gap: 0.6rem 1.25rem; align-items: center; margin-top: 0.9rem; }
-    .job-side { display: flex; flex-direction: column; align-items: flex-end; gap: 0.6rem; text-align: right; }
-    .errnote { color: var(--red); font-size: 0.82rem; max-width: 22rem; }
-    /* Remove is a quiet, subordinate action next to the primary Stop/Resume. */
-    .removelink { color: var(--muted); font-size: 0.82rem; font-weight: 600; }
-    .removelink:hover { color: var(--red); text-decoration: none; }
-    @media (max-width: 720px) {
-      .job { grid-template-columns: 1fr; }
-      .job-side { align-items: flex-start; text-align: left; }
-    }
-
-    /* Checkbox row (remove-confirm): keep the box its natural size beside its
-       label, since the global input rule stretches inputs to full width. */
-    label.checkbox { display: flex; gap: 0.65rem; align-items: flex-start; font-weight: 400;
-      color: var(--slate); margin: 1.2rem 0 0; line-height: 1.5; }
-    label.checkbox input { width: auto; margin-top: 0.2rem; flex: none; accent-color: var(--red); }
-    .danger-zone { border-color: rgba(236,55,80,.3); }
-
-    /* ── Tables ───────────────────────────────────────────────────────── */
-    .table-wrap { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 0.7rem 0.8rem; border-bottom: 1px solid var(--smoke); vertical-align: top; }
-    thead th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
-      color: var(--muted); font-weight: 700; border-bottom: 2px solid var(--smoke); }
-    tbody tr:last-child td { border-bottom: none; }
-    tbody tr:hover { background: var(--snow); }
-    .field-name { font-weight: 700; color: var(--dark); }
-    .id { font-family: var(--mono); font-size: 0.82rem; color: var(--muted); word-break: break-all; }
-    /* Rich-text preview cells mirror how Airtable renders a long-text field:
-       formatted bold/italic text with paragraph spacing, not raw markup. */
-    .richtext { background: var(--snow); border: 1px solid var(--smoke); color: var(--slate);
-      padding: 0.6rem 0.8rem; border-radius: var(--radius-sm); margin: 0.3rem 0 0; font-size: 0.9rem; line-height: 1.5; }
-    .richtext p { margin: 0 0 0.5rem; }
-    .richtext p:last-child { margin-bottom: 0; }
-    .richtext strong { font-weight: 700; color: var(--dark); }
-    .richtext em { font-style: italic; }
-
-    /* ── Notices ──────────────────────────────────────────────────────── */
-    .notice { padding: 0.85rem 1.1rem; border-radius: var(--radius-sm); margin-bottom: 1.25rem;
-      display: flex; gap: 0.6rem; align-items: flex-start; font-size: 0.95rem; }
-    .notice.flash { background: rgba(51,214,166,.12); border: 1px solid rgba(51,214,166,.4); color: #0f6b50; }
-    .notice.error { background: rgba(236,55,80,.08); border: 1px solid rgba(236,55,80,.35); color: #b3243b; }
-    .notice .ic { flex: none; font-weight: 700; }
-
-    /* ── Sample preview blocks ────────────────────────────────────────── */
-    .sample { border: 1px solid var(--smoke); border-radius: var(--radius-sm); padding: 1rem 1.1rem; background: var(--snow); }
-    .sample + .sample { margin-top: 0.9rem; }
-    .sample-head { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; align-items: baseline; margin-bottom: 0.5rem; }
-    .sample-head .sid { font-family: var(--mono); font-weight: 700; color: var(--dark); font-size: 0.85rem; }
-
-    /* ── Login hero ───────────────────────────────────────────────────── */
-    .hero { text-align: center; padding: 2.5rem 1.6rem; }
-    .hero .flag { height: 64px; margin-bottom: 1.25rem; }
-    .hero h1 { font-size: 2.6rem; }
-    .hero .lede { margin: 0.9rem auto 0; }
-    .hero .flow { margin: 2rem auto; max-width: 36rem; text-align: left; }
-    .hero .btn-row { justify-content: center; margin-top: 0.5rem; }
-    .nps-scale { display: flex; gap: 4px; max-width: 36rem; margin: 1.75rem auto 0; }
-    .nps-scale span { flex: 1; height: 8px; border-radius: 3px; }
-    .nps-caption { color: var(--muted); font-size: 0.78rem; margin-top: 0.5rem; display: flex; justify-content: space-between; max-width: 36rem; margin-left: auto; margin-right: auto; }
-
-    /* ── Page-load reveal (quiet, one move) ───────────────────────────── */
-    main > * { animation: rise .5s cubic-bezier(.2,.7,.2,1) both; }
-    main > *:nth-child(2) { animation-delay: .05s; }
-    main > *:nth-child(3) { animation-delay: .1s; }
-    main > *:nth-child(4) { animation-delay: .15s; }
-    @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-    @media (prefers-reduced-motion: reduce) {
-      main > * { animation: none; }
-      .btn:active { transform: none; }
-      .flow-arrow { transition: none; }
-    }
-  </style>
+  <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 <div class="brandbar"></div>
@@ -255,7 +22,7 @@
     {{if .UserEmail}}
       <a class="navlink" href="/">Dashboard</a>
       <a class="navlink" href="/forms/new">New form</a>
-      <a class="navlink" href="/audit">Audit log</a>
+      {{if .IsAdmin}}<a class="navlink" href="/audit">Audit log</a>{{end}}
       <span class="who">{{.UserEmail}}</span>
       <a class="navlink" href="/logout">Sign out</a>
     {{end}}
@@ -264,26 +31,7 @@
 {{end}}
 
 {{define "foot"}}
-<script>
-  // Localize any <time data-localtime> to the viewer's timezone. The server
-  // emits an absolute UTC instant in the datetime attribute and a UTC fallback
-  // as the text; here we swap the text for the local-zone rendering. Leaving the
-  // UTC text in place on parse failure keeps the value correct, just not local.
-  (function () {
-    var els = document.querySelectorAll('time[data-localtime]');
-    for (var i = 0; i < els.length; i++) {
-      var iso = els[i].getAttribute('datetime');
-      if (!iso) continue;
-      var d = new Date(iso);
-      if (isNaN(d.getTime())) continue;
-      els[i].textContent = d.toLocaleString(undefined, {
-        year: 'numeric', month: 'short', day: 'numeric',
-        hour: '2-digit', minute: '2-digit', timeZoneName: 'short'
-      });
-      els[i].title = d.toString();
-    }
-  })();
-</script>
+<script src="/static/app.js" defer data-localtime-localizer="toLocaleString"></script>
 </body>
 </html>
 {{end}}
@@ -295,7 +43,7 @@
 <main>
   <div class="card hero">
     <img class="flag" src="https://assets.hackclub.com/flag-standalone.svg" alt="Hack Club">
-    <h1>Fillout <span style="color:var(--red)">→</span> NPS sync</h1>
+    <h1>Fillout <span class="brand-arrow">→</span> NPS sync</h1>
     <p class="lede">Quickly sync Fillout NPS feedback submissions to the Unified YSWS Projects DB on Airtable, including auto field mapping and deduplication.</p>
 
     <div class="flow">
@@ -315,14 +63,14 @@
     <div class="btn-row">
       <a class="btn primary" href="/login">Log in with Hack Club</a>
     </div>
-    <p class="helptext" style="margin:0.6rem auto 0; max-width:26rem">Your email must match the “Hack Club Auth Email” on your entry in the YSWS Authors table.</p>
+    <p class="helptext login-help">Your email must match the “Hack Club Auth Email” on your entry in the YSWS Authors table.</p>
     <div class="nps-scale" aria-hidden="true">
-      <span style="background:#ec3750"></span><span style="background:#ec3750"></span>
-      <span style="background:#ff6b4a"></span><span style="background:#ff8c37"></span>
-      <span style="background:#ff8c37"></span><span style="background:#ffa233"></span>
-      <span style="background:#f1c40f"></span><span style="background:#bcd34a"></span>
-      <span style="background:#7ed98a"></span><span style="background:#33d6a6"></span>
-      <span style="background:#33d6a6"></span>
+      <span class="score-red"></span><span class="score-red"></span>
+      <span class="score-red-orange"></span><span class="score-orange"></span>
+      <span class="score-orange"></span><span class="score-orange-light"></span>
+      <span class="score-yellow"></span><span class="score-yellow-green"></span>
+      <span class="score-green-light"></span><span class="score-green"></span>
+      <span class="score-green"></span>
     </div>
     <div class="nps-caption"><span>0 · Detractors</span><span>7–8 · Passives</span><span>Promoters · 10</span></div>
   </div>
@@ -339,7 +87,7 @@
     <p class="eyebrow">Dashboard</p>
     <h1>Sync jobs</h1>
     <p class="lede">Each job polls a Fillout form on a schedule and writes new submissions into its NPS table. Set one up and it keeps running until you stop it.</p>
-    <div class="btn-row" style="margin-top:1.1rem">
+    <div class="btn-row actions-row">
       <a class="btn primary" href="/forms/new">Set up a new form</a>
     </div>
   </div>
@@ -376,33 +124,37 @@
         <div class="small muted">Last poll {{if .LastPolledISO}}<time datetime="{{.LastPolledISO}}" data-localtime>{{.LastPolled}}</time>{{else}}{{.LastPolled}}{{end}}</div>
         <div class="small muted">Set up by {{.CreatedBy}}</div>
         {{if .LastError}}<div class="errnote">⚠ {{.LastError}}</div>{{end}}
-        {{if .Running}}
-        <form method="post" action="/sync/stop" style="margin:0">
-          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-          <input type="hidden" name="job_id" value="{{.ID}}">
-          <button class="btn danger" type="submit">Stop sync</button>
-        </form>
+        {{if .CanManage}}
+          {{if .Running}}
+          <form method="post" action="/sync/stop" class="action-form">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <input type="hidden" name="job_id" value="{{.ID}}">
+            <button class="btn danger" type="submit">Stop sync</button>
+          </form>
+          {{else}}
+          <form method="post" action="/sync/resume" class="action-form">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <input type="hidden" name="job_id" value="{{.ID}}">
+            <button class="btn secondary" type="submit">Resume</button>
+          </form>
+          {{end}}
+          <a class="removelink" href="/sync/remove?job_id={{.ID}}">Remove…</a>
         {{else}}
-        <form method="post" action="/sync/resume" style="margin:0">
-          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-          <input type="hidden" name="job_id" value="{{.ID}}">
-          <button class="btn secondary" type="submit">Resume</button>
-        </form>
+          <div class="small muted">Only the creator or an admin can manage this sync.</div>
         {{end}}
-        <a class="removelink" href="/sync/remove?job_id={{.ID}}">Remove…</a>
       </div>
     </div>
     {{end}}
   {{else}}
-  <div class="card" style="text-align:center; padding:2.5rem 1.6rem">
-    <div class="flow" style="max-width:38rem;margin:0 auto 1.25rem">
+  <div class="card empty-state">
+    <div class="flow empty-flow">
       <div class="flow-node"><div class="role">Source</div><div class="title">A Fillout form</div></div>
       {{template "flow_arrow"}}
       <div class="flow-node"><div class="role">Destination</div><div class="title">NPS table</div></div>
     </div>
     <h2>No syncs yet</h2>
-    <p class="lede" style="margin-left:auto;margin-right:auto">Connect your first Fillout form to start streaming NPS responses into Airtable.</p>
-    <div class="btn-row" style="justify-content:center;margin-top:1.1rem"><a class="btn primary" href="/forms/new">Set up a new form</a></div>
+    <p class="lede centered-lede">Connect your first Fillout form to start streaming NPS responses into Airtable.</p>
+    <div class="btn-row center-actions actions-row"><a class="btn primary" href="/forms/new">Set up a new form</a></div>
   </div>
   {{end}}
 </main>
@@ -414,11 +166,11 @@
 {{template "nav" .}}
 <main class="stack">
   <div class="card danger-zone">
-    <p class="eyebrow" style="color:var(--red)">Remove sync</p>
+    <p class="eyebrow danger-eyebrow">Remove sync</p>
     <h1>Remove this sync?</h1>
     <p class="lede">This stops polling and deletes the sync job. The records it already wrote to Airtable stay put unless you ask to delete them below. You can set the sync up again anytime.</p>
 
-    <div class="flow" style="margin-top:1.25rem">
+    <div class="flow remove-flow">
       <div class="flow-node"><div class="role">Fillout form</div><div class="title">{{.FormName}}</div><div class="sub">{{.FormID}}</div></div>
       {{template "flow_arrow"}}
       <div class="flow-node"><div class="role">NPS table</div><div class="title">{{.Table}}</div><div class="sub">{{.BaseID}}</div></div>
@@ -435,7 +187,7 @@
       {{else}}
       <p class="helptext">This sync hasn't created any Airtable records, so there's nothing to delete there.</p>
       {{end}}
-      <div class="btn-row" style="margin-top:1.4rem">
+      <div class="btn-row remove-actions">
         <button class="btn primary" type="submit">Remove sync</button>
         <a class="btn secondary" href="/">Cancel</a>
       </div>
@@ -459,7 +211,7 @@
       <label class="field" for="form_input">Fillout form link or ID</label>
       <input type="text" id="form_input" name="form_input" placeholder="forms.fillout.com/t/…  ·  build.fillout.com/editor/…  ·  or the form ID" value="{{.FormInput}}" required autofocus>
       <p class="helptext">We accept the public form link, the editor link, or a bare form ID.</p>
-      <div class="btn-row" style="margin-top:1.2rem">
+      <div class="btn-row form-actions">
         <button class="btn primary" type="submit">Preview mapping →</button>
         <a class="btn ghost" href="/">Cancel</a>
       </div>
@@ -472,7 +224,7 @@
 {{define "preview_samples"}}
 <h2>First {{len .Samples}} submissions as NPS records</h2>
 {{if not .Samples}}<p class="lede">This form has no submissions yet — the sync will pick them up as they arrive.</p>{{end}}
-<div style="margin-top:1rem">
+<div class="samples-list">
 {{range .Samples}}
   <div class="sample">
     <div class="sample-head">
@@ -484,7 +236,7 @@
         <tbody>
         {{range .Fields}}
           <tr>
-            <td class="field-name" style="width:30%">{{.Name}}</td>
+            <td class="field-name sample-field-name">{{.Name}}</td>
             <td>{{if .Rich}}<div class="richtext">{{.Value}}</div>{{else}}{{.Value}}{{end}}</td>
           </tr>
         {{end}}
@@ -504,12 +256,11 @@
   <form method="post" action="/sync/start">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <input type="hidden" name="form_id" value="{{.FormID}}">
-    <input type="hidden" name="form_name" value="{{.FormName}}">
 
     <div class="card stack-tight">
       <p class="eyebrow">Step 2 of 2 · Review &amp; link</p>
       <h1>{{.FormName}}</h1>
-      <div class="flow" style="margin-top:1rem">
+      <div class="flow preview-flow">
         <div class="flow-node"><div class="role">Fillout form</div><div class="title">{{.FormName}}</div><div class="sub">{{.FormID}}</div></div>
         {{template "flow_arrow"}}
         <div class="flow-node"><div class="role">Destination</div><div class="title">{{.Table}}</div><div class="sub">{{.BaseID}}</div></div>
@@ -536,7 +287,7 @@
       <p class="eyebrow">Field mapping</p>
       <h2>Where each question lands</h2>
       <p class="lede">Each form question feeds the NPS column chosen below. “Custom Fields (catch-all)” keeps the answer verbatim; “Ignore” drops it. For the two feedback columns you can add an optional template so the text reads well — use <code>{{"{{question}}"}}</code> and <code>{{"{{answer}}"}}</code> (leave blank to copy the answer directly).</p>
-      <div class="table-wrap" style="margin-top:1rem">
+      <div class="table-wrap mapping-table">
         <table>
           <thead><tr><th>Form question</th><th>Type</th><th>NPS column it fills</th><th>Why</th></tr></thead>
           <tbody>
@@ -551,7 +302,7 @@
                     <option value="{{.Value}}" {{if eq .Value $sel}}selected{{end}}>{{.Label}}</option>
                   {{end}}
                 </select>
-                <input type="text" class="template-input" id="template_{{.QuestionID}}" name="template_{{.QuestionID}}" value="{{.Template}}" placeholder="optional template, e.g. **{{"{{question}}"}}** {{"{{answer}}"}}" autocomplete="off" style="margin-top:0.5rem; display:none">
+                <input type="text" class="template-input" id="template_{{.QuestionID}}" name="template_{{.QuestionID}}" value="{{.Template}}" placeholder="optional template, e.g. **{{"{{question}}"}}** {{"{{answer}}"}}" autocomplete="off">
               </td>
               <td class="muted small">{{if .Confidence}}<span class="pill">{{.Confidence}}</span> {{end}}{{.Reasoning}}</td>
             </tr>
@@ -570,68 +321,12 @@
 
     <div class="card">
       <p>Starting the sync writes these records to Airtable now and keeps polling for new submissions. Records already present — synced by us or anyone else — are skipped.</p>
-      <div class="btn-row" style="margin-top:1.1rem">
+      <div class="btn-row actions-row">
         <button class="btn primary" type="submit">Start sync</button>
         <a class="btn ghost" href="/forms/new">Back</a>
       </div>
     </div>
   </form>
-  <script>
-    // Show the optional template box only when a question maps to a feedback
-    // column (the templatable NPS columns).
-    (function () {
-      var TEMPLATABLE = { doing_well: true, improve: true };
-      document.querySelectorAll('.target-select').forEach(function (sel) {
-        var tmpl = document.getElementById('template_' + sel.dataset.qid);
-        if (!tmpl) return;
-        var sync = function () { tmpl.style.display = TEMPLATABLE[sel.value] ? 'block' : 'none'; };
-        sel.addEventListener('change', sync);
-        sync();
-      });
-    })();
-
-    // Re-render the sample preview whenever the mapping changes, so it always
-    // shows what the sync would actually write. The server does the transform
-    // (POST /forms/preview/samples) and returns just the samples fragment, which
-    // we swap into #preview-samples. A sequence guard drops any response that a
-    // newer request has already superseded.
-    (function () {
-      var form = document.querySelector('form[action="/sync/start"]');
-      var box = document.getElementById('preview-samples');
-      if (!form || !box) return;
-
-      var seq = 0;
-      function refresh() {
-        var mine = ++seq;
-        box.style.opacity = '0.5';
-        fetch('/forms/preview/samples', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams(new FormData(form)).toString(),
-        }).then(function (resp) {
-          if (!resp.ok) throw new Error('HTTP ' + resp.status);
-          return resp.text();
-        }).then(function (html) {
-          if (mine !== seq) return; // a newer request is in flight; ignore this one
-          box.innerHTML = html;
-          box.style.opacity = '';
-        }).catch(function () {
-          if (mine !== seq) return;
-          box.style.opacity = ''; // leave the last good preview in place on error
-        });
-      }
-
-      var timer;
-      function debounced() { clearTimeout(timer); timer = setTimeout(refresh, 350); }
-
-      form.querySelectorAll('.target-select').forEach(function (sel) {
-        sel.addEventListener('change', refresh);
-      });
-      form.querySelectorAll('.template-input').forEach(function (inp) {
-        inp.addEventListener('input', debounced);
-      });
-    })();
-  </script>
 </main>
 {{template "foot" .}}
 {{end}}
@@ -679,7 +374,7 @@
     <p class="eyebrow">Heads up</p>
     <h1>{{.Heading}}</h1>
     <p class="lede">{{.Message}}</p>
-    <div class="btn-row" style="margin-top:1.2rem"><a class="btn primary" href="/">Back to dashboard</a></div>
+    <div class="btn-row form-actions"><a class="btn primary" href="/">Back to dashboard</a></div>
   </div>
 </main>
 {{template "foot" .}}

@@ -241,6 +241,11 @@ func (a *Authenticator) CurrentUser(r *http.Request) (User, bool) {
 	return User{Email: s.Email}, true
 }
 
+// ContextWithUser returns a child context carrying user as the authenticated principal.
+func ContextWithUser(ctx context.Context, user User) context.Context {
+	return context.WithValue(ctx, userCtxKey, user)
+}
+
 // UserFromContext returns the User injected by RequireUser.
 func UserFromContext(ctx context.Context) (User, bool) {
 	u, ok := ctx.Value(userCtxKey).(User)

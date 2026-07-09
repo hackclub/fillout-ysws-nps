@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -101,6 +102,18 @@ func TestRequireUser_AllowsValidSession(t *testing.T) {
 
 	if sawEmail != "zach@hackclub.com" {
 		t.Errorf("context email = %q", sawEmail)
+	}
+}
+
+func TestContextWithUserRoundTrip(t *testing.T) {
+	want := User{Email: "zach@hackclub.com"}
+	ctx := ContextWithUser(context.Background(), want)
+	got, ok := UserFromContext(ctx)
+	if !ok {
+		t.Fatal("UserFromContext did not find user")
+	}
+	if got != want {
+		t.Fatalf("UserFromContext = %+v, want %+v", got, want)
 	}
 }
 

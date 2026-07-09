@@ -23,14 +23,14 @@ type SubmissionRecord struct {
 }
 
 // RecordSubmission inserts a ledger entry. It reports whether a new row was
-// inserted; a false return means an entry for this (form, submission) already
+// inserted; a false return means an entry for this (sync job, submission) already
 // existed and nothing was changed (the fast-path dedup guarantee).
 func (db *DB) RecordSubmission(ctx context.Context, rec SubmissionRecord) (inserted bool, err error) {
 	tag, err := db.pool.Exec(ctx,
 		`INSERT INTO synced_submissions
 			(sync_job_id, fillout_form_id, fillout_submission_id, airtable_record_id, outcome, error_text)
 		 VALUES ($1, $2, $3, $4, $5, $6)
-		 ON CONFLICT (fillout_form_id, fillout_submission_id) DO NOTHING`,
+		 ON CONFLICT (sync_job_id, fillout_submission_id) DO NOTHING`,
 		rec.SyncJobID, rec.FilloutFormID, rec.FilloutSubmissionID,
 		rec.AirtableRecordID, rec.Outcome, rec.ErrorText)
 	if err != nil {
@@ -40,16 +40,16 @@ func (db *DB) RecordSubmission(ctx context.Context, rec SubmissionRecord) (inser
 }
 
 // ExistingSubmissionIDs returns the subset of submissionIDs that already have a
-// ledger entry for the form. It is the batched form of IsSubmissionSynced.
-func (db *DB) ExistingSubmissionIDs(ctx context.Context, formID string, submissionIDs []string) (map[string]bool, error) {
+// ledger entry for the sync job. It is the batched form of IsSubmissionSynced.
+func (db *DB) ExistingSubmissionIDs(ctx context.Context, syncJobID int64, submissionIDs []string) (map[string]bool, error) {
 	out := make(map[string]bool, len(submissionIDs))
 	if len(submissionIDs) == 0 {
 		return out, nil
 	}
 	rows, err := db.pool.Query(ctx,
 		`SELECT fillout_submission_id FROM synced_submissions
-		 WHERE fillout_form_id = $1 AND fillout_submission_id = ANY($2)`,
-		formID, submissionIDs)
+		 WHERE sync_job_id = $1 AND fillout_submission_id = ANY($2)`,
+		syncJobID, submissionIDs)
 	if err != nil {
 		return nil, fmt.Errorf("db: checking submissions: %w", err)
 	}
@@ -88,7 +88,7 @@ func (db *DB) RecordSubmissions(ctx context.Context, recs []SubmissionRecord) (i
 		`INSERT INTO synced_submissions
 			(sync_job_id, fillout_form_id, fillout_submission_id, airtable_record_id, outcome, error_text)
 		 SELECT * FROM unnest($1::bigint[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
-		 ON CONFLICT (fillout_form_id, fillout_submission_id) DO NOTHING`,
+		 ON CONFLICT (sync_job_id, fillout_submission_id) DO NOTHING`,
 		jobIDs, formIDs, subIDs, recordIDs, outcomes, errTexts)
 	if err != nil {
 		return 0, fmt.Errorf("db: recording submissions: %w", err)
@@ -123,14 +123,14 @@ func (db *DB) CreatedRecordIDs(ctx context.Context, jobID int64) ([]string, erro
 }
 
 // IsSubmissionSynced reports whether a ledger entry already exists for the given
-// form and submission.
-func (db *DB) IsSubmissionSynced(ctx context.Context, formID, submissionID string) (bool, error) {
+// sync job and submission.
+func (db *DB) IsSubmissionSynced(ctx context.Context, syncJobID int64, submissionID string) (bool, error) {
 	var exists bool
 	err := db.pool.QueryRow(ctx,
 		`SELECT EXISTS (
 			SELECT 1 FROM synced_submissions
-			WHERE fillout_form_id = $1 AND fillout_submission_id = $2)`,
-		formID, submissionID).Scan(&exists)
+			WHERE sync_job_id = $1 AND fillout_submission_id = $2)`,
+		syncJobID, submissionID).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("db: checking submission: %w", err)
 	}
@@ -166,14 +166,51 @@ func (db *DB) StatsForJob(ctx context.Context, jobID int64) (JobStats, error) {
 		if err := rows.Scan(&outcome, &count); err != nil {
 			return JobStats{}, fmt.Errorf("db: scanning job stats: %w", err)
 		}
-		switch outcome {
-		case OutcomeCreated:
-			stats.Created = count
-		case OutcomeSkippedExisting:
-			stats.SkippedExisting = count
-		case OutcomeError:
-			stats.Errored = count
-		}
+		applyOutcomeCount(&stats, outcome, count)
 	}
 	return stats, rows.Err()
+}
+
+// StatsForJobs returns the ledger outcome counts for each job with ledger rows.
+func (db *DB) StatsForJobs(ctx context.Context, jobIDs []int64) (map[int64]JobStats, error) {
+	out := make(map[int64]JobStats)
+	if len(jobIDs) == 0 {
+		return out, nil
+	}
+	rows, err := db.pool.Query(ctx,
+		`SELECT sync_job_id, outcome, COUNT(*)
+		 FROM synced_submissions
+		 WHERE sync_job_id = ANY($1)
+		 GROUP BY sync_job_id, outcome`, jobIDs)
+	if err != nil {
+		return nil, fmt.Errorf("db: jobs stats: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var jobID int64
+		var outcome string
+		var count int
+		if err := rows.Scan(&jobID, &outcome, &count); err != nil {
+			return nil, fmt.Errorf("db: scanning jobs stats: %w", err)
+		}
+		stats := out[jobID]
+		applyOutcomeCount(&stats, outcome, count)
+		out[jobID] = stats
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db: jobs stats: %w", err)
+	}
+	return out, nil
+}
+
+func applyOutcomeCount(stats *JobStats, outcome string, count int) {
+	switch outcome {
+	case OutcomeCreated:
+		stats.Created = count
+	case OutcomeSkippedExisting:
+		stats.SkippedExisting = count
+	case OutcomeError:
+		stats.Errored = count
+	}
 }

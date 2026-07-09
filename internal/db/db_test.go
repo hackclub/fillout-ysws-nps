@@ -174,7 +174,7 @@ func TestRecordSubmission_Dedup(t *testing.T) {
 		t.Fatal("duplicate RecordSubmission: inserted = true, want false")
 	}
 
-	synced, err := database.IsSubmissionSynced(ctx, job.FilloutFormID, "sub1")
+	synced, err := database.IsSubmissionSynced(ctx, job.ID, "sub1")
 	if err != nil {
 		t.Fatalf("IsSubmissionSynced: %v", err)
 	}
@@ -211,12 +211,63 @@ func TestBatchLedger(t *testing.T) {
 		t.Fatalf("re-insert: n=%d err=%v, want 1", n, err)
 	}
 
-	existing, err := database.ExistingSubmissionIDs(ctx, job.FilloutFormID, []string{"s1", "s2", "s3", "s4"})
+	existing, err := database.ExistingSubmissionIDs(ctx, job.ID, []string{"s1", "s2", "s3", "s4"})
 	if err != nil {
 		t.Fatalf("ExistingSubmissionIDs: %v", err)
 	}
 	if !existing["s1"] || !existing["s2"] || !existing["s3"] || existing["s4"] {
 		t.Errorf("existing = %v, want s1/s2/s3 true, s4 false", existing)
+	}
+}
+
+func TestLedgerDedupScopedToJob(t *testing.T) {
+	database := testDB(t)
+	ctx := context.Background()
+
+	job1, err := database.CreateJob(ctx, sampleJob())
+	if err != nil {
+		t.Fatalf("CreateJob job1: %v", err)
+	}
+	job2Input := sampleJob()
+	job2Input.AirtableTable = "NPS Archive"
+	job2, err := database.CreateJob(ctx, job2Input)
+	if err != nil {
+		t.Fatalf("CreateJob job2: %v", err)
+	}
+
+	rec1 := SubmissionRecord{SyncJobID: job1.ID, FilloutFormID: job1.FilloutFormID, FilloutSubmissionID: "s1", Outcome: OutcomeCreated}
+	rec2 := SubmissionRecord{SyncJobID: job2.ID, FilloutFormID: job2.FilloutFormID, FilloutSubmissionID: "s1", Outcome: OutcomeCreated}
+	inserted, err := database.RecordSubmission(ctx, rec1)
+	if err != nil {
+		t.Fatalf("RecordSubmission job1: %v", err)
+	}
+	if !inserted {
+		t.Fatal("RecordSubmission job1 inserted = false, want true")
+	}
+	inserted, err = database.RecordSubmission(ctx, rec2)
+	if err != nil {
+		t.Fatalf("RecordSubmission job2: %v", err)
+	}
+	if !inserted {
+		t.Fatal("RecordSubmission job2 inserted = false, want true")
+	}
+
+	for _, job := range []*SyncJob{job1, job2} {
+		existing, err := database.ExistingSubmissionIDs(ctx, job.ID, []string{"s1"})
+		if err != nil {
+			t.Fatalf("ExistingSubmissionIDs job %d: %v", job.ID, err)
+		}
+		if !existing["s1"] {
+			t.Fatalf("ExistingSubmissionIDs job %d missing s1", job.ID)
+		}
+	}
+
+	inserted, err = database.RecordSubmission(ctx, rec1)
+	if err != nil {
+		t.Fatalf("RecordSubmission duplicate job1: %v", err)
+	}
+	if inserted {
+		t.Fatal("duplicate job1 RecordSubmission inserted = true, want false")
 	}
 }
 
@@ -294,6 +345,62 @@ func TestStatsAndProgress(t *testing.T) {
 	}
 	if got.LastPolledAt == nil {
 		t.Error("LastPolledAt not set")
+	}
+}
+
+func TestStatsForJobs(t *testing.T) {
+	database := testDB(t)
+	ctx := context.Background()
+
+	empty, err := database.StatsForJobs(ctx, nil)
+	if err != nil {
+		t.Fatalf("StatsForJobs empty: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("StatsForJobs empty = %v, want empty map", empty)
+	}
+
+	job1, err := database.CreateJob(ctx, sampleJob())
+	if err != nil {
+		t.Fatalf("CreateJob job1: %v", err)
+	}
+	job2Input := sampleJob()
+	job2Input.AirtableTable = "NPS Archive"
+	job2, err := database.CreateJob(ctx, job2Input)
+	if err != nil {
+		t.Fatalf("CreateJob job2: %v", err)
+	}
+
+	if _, err := database.RecordSubmissions(ctx, []SubmissionRecord{
+		{SyncJobID: job1.ID, FilloutFormID: job1.FilloutFormID, FilloutSubmissionID: "j1-s1", Outcome: OutcomeCreated},
+		{SyncJobID: job1.ID, FilloutFormID: job1.FilloutFormID, FilloutSubmissionID: "j1-s2", Outcome: OutcomeCreated},
+		{SyncJobID: job1.ID, FilloutFormID: job1.FilloutFormID, FilloutSubmissionID: "j1-s3", Outcome: OutcomeError},
+		{SyncJobID: job2.ID, FilloutFormID: job2.FilloutFormID, FilloutSubmissionID: "j2-s1", Outcome: OutcomeSkippedExisting},
+	}); err != nil {
+		t.Fatalf("RecordSubmissions: %v", err)
+	}
+
+	missingID := job2.ID + 999
+	statsByJob, err := database.StatsForJobs(ctx, []int64{job1.ID, job2.ID, missingID})
+	if err != nil {
+		t.Fatalf("StatsForJobs: %v", err)
+	}
+	if got := statsByJob[job1.ID]; got.Created != 2 || got.SkippedExisting != 0 || got.Errored != 1 {
+		t.Errorf("job1 stats = %+v, want created=2 skipped=0 errored=1", got)
+	}
+	if got := statsByJob[job2.ID]; got.Created != 0 || got.SkippedExisting != 1 || got.Errored != 0 {
+		t.Errorf("job2 stats = %+v, want created=0 skipped=1 errored=0", got)
+	}
+	if _, ok := statsByJob[missingID]; ok {
+		t.Errorf("StatsForJobs included missing job ID %d: %v", missingID, statsByJob[missingID])
+	}
+
+	job1Single, err := database.StatsForJob(ctx, job1.ID)
+	if err != nil {
+		t.Fatalf("StatsForJob: %v", err)
+	}
+	if job1Single != statsByJob[job1.ID] {
+		t.Errorf("StatsForJob = %+v, StatsForJobs = %+v", job1Single, statsByJob[job1.ID])
 	}
 }
 

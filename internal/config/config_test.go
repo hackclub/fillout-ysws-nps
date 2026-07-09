@@ -29,6 +29,18 @@ func lookupFrom(env map[string]string) func(string) (string, bool) {
 	}
 }
 
+func assertStringSlice(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
 func TestLoadFrom_Defaults(t *testing.T) {
 	cfg, err := loadFrom(lookupFrom(fullEnv()))
 	if err != nil {
@@ -112,6 +124,45 @@ func TestLoadFrom_InvalidPollInterval(t *testing.T) {
 		if _, err := loadFrom(lookupFrom(env)); err == nil {
 			t.Errorf("NPS_POLL_INTERVAL=%q: expected error, got nil", raw)
 		}
+	}
+}
+
+func TestLoadFrom_AdminEmailsDefaultToAllowedEmails(t *testing.T) {
+	env := fullEnv()
+	env["ALLOWED_EMAILS"] = " Zach@HackClub.com , Ops@HackClub.com "
+
+	cfg, err := loadFrom(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("loadFrom: %v", err)
+	}
+	want := []string{"zach@hackclub.com", "ops@hackclub.com"}
+	assertStringSlice(t, cfg.AllowedEmails, want)
+	assertStringSlice(t, cfg.AdminEmails, want)
+}
+
+func TestLoadFrom_AdminEmailsOverrideAllowedEmails(t *testing.T) {
+	env := fullEnv()
+	env["ALLOWED_EMAILS"] = "user@hackclub.com"
+	env["ADMIN_EMAILS"] = " Admin@HackClub.com , ops@hackclub.com "
+
+	cfg, err := loadFrom(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("loadFrom: %v", err)
+	}
+	assertStringSlice(t, cfg.AllowedEmails, []string{"user@hackclub.com"})
+	assertStringSlice(t, cfg.AdminEmails, []string{"admin@hackclub.com", "ops@hackclub.com"})
+}
+
+func TestConfigIsAdminNormalizesEmail(t *testing.T) {
+	cfg := &Config{AdminEmails: []string{"admin@hackclub.com"}}
+	if !cfg.IsAdmin(" Admin@HackClub.com ") {
+		t.Fatal("IsAdmin did not trim and normalize case")
+	}
+	if cfg.IsAdmin("user@hackclub.com") {
+		t.Fatal("IsAdmin accepted a non-admin email")
+	}
+	if cfg.IsAdmin(" ") {
+		t.Fatal("IsAdmin accepted an empty email")
 	}
 }
 

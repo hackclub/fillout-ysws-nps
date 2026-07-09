@@ -51,6 +51,9 @@ type Config struct {
 	// Authorization also accepts emails listed in the YSWS Authors Airtable table
 	// (see auth.Allowlist); this list is the always-available bootstrap.
 	AllowedEmails []string
+	// AdminEmails can manage every sync and view the audit log, normalized to lowercase.
+	// When ADMIN_EMAILS is unset, it defaults to AllowedEmails for bootstrap compatibility.
+	AdminEmails []string
 	// SessionSecret is the HMAC key used to sign session cookies.
 	SessionSecret []byte
 
@@ -72,6 +75,12 @@ func loadFrom(lookup func(string) (string, bool)) (*Config, error) {
 		return strings.TrimSpace(v)
 	}
 
+	allowedEmails := parseEmails(get("ALLOWED_EMAILS"))
+	adminEmails := parseEmails(get("ADMIN_EMAILS"))
+	if len(adminEmails) == 0 {
+		adminEmails = append([]string(nil), allowedEmails...)
+	}
+
 	cfg := &Config{
 		Port:               firstNonEmpty(get("PORT"), "8080"),
 		HCAuthClientID:     get("HC_AUTH_CLIENT_ID"),
@@ -82,7 +91,8 @@ func loadFrom(lookup func(string) (string, bool)) (*Config, error) {
 		AirtableAPIKey:     get("AIRTABLE_API_KEY"),
 		AirtableBaseID:     get("AIRTABLE_BASE_ID"),
 		NPSTable:           firstNonEmpty(get("NPS_TABLE"), DefaultNPSTable),
-		AllowedEmails:      parseEmails(get("ALLOWED_EMAILS")),
+		AllowedEmails:      allowedEmails,
+		AdminEmails:        adminEmails,
 		SessionSecret:      []byte(get("SESSION_SECRET")),
 		DatabaseURL:        get("DATABASE_URL"),
 	}
@@ -102,6 +112,20 @@ func loadFrom(lookup func(string) (string, bool)) (*Config, error) {
 // CallbackURL returns the full OAuth callback URL registered with Hack Club.
 func (c *Config) CallbackURL() string {
 	return c.HCAuthCallbackBase + "/callback"
+}
+
+// IsAdmin reports whether email is configured as a global sync admin.
+func (c *Config) IsAdmin(email string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(email))
+	if normalized == "" {
+		return false
+	}
+	for _, admin := range c.AdminEmails {
+		if admin == normalized {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Config) validate() error {

@@ -19,25 +19,30 @@ import (
 
 // --- fakes ---
 
+type ledgerKey struct {
+	syncJobID    int64
+	submissionID string
+}
+
 type fakeStore struct {
 	mu       sync.Mutex
-	ledger   map[string]db.SubmissionRecord // keyed by submissionID
+	ledger   map[ledgerKey]db.SubmissionRecord
 	progress *time.Time
 	lastErr  string
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{ledger: map[string]db.SubmissionRecord{}}
+	return &fakeStore{ledger: map[ledgerKey]db.SubmissionRecord{}}
 }
 
 func (f *fakeStore) ListActiveJobs(context.Context) ([]*db.SyncJob, error) { return nil, nil }
 
-func (f *fakeStore) ExistingSubmissionIDs(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (f *fakeStore) ExistingSubmissionIDs(_ context.Context, syncJobID int64, ids []string) (map[string]bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make(map[string]bool)
 	for _, id := range ids {
-		if _, ok := f.ledger[id]; ok {
+		if _, ok := f.ledger[ledgerKey{syncJobID: syncJobID, submissionID: id}]; ok {
 			out[id] = true
 		}
 	}
@@ -49,10 +54,11 @@ func (f *fakeStore) RecordSubmissions(_ context.Context, recs []db.SubmissionRec
 	defer f.mu.Unlock()
 	n := 0
 	for _, rec := range recs {
-		if _, ok := f.ledger[rec.FilloutSubmissionID]; ok {
+		key := ledgerKey{syncJobID: rec.SyncJobID, submissionID: rec.FilloutSubmissionID}
+		if _, ok := f.ledger[key]; ok {
 			continue
 		}
-		f.ledger[rec.FilloutSubmissionID] = rec
+		f.ledger[key] = rec
 		n++
 	}
 	return n, nil
@@ -198,8 +204,8 @@ func TestSyncOnce_CreatesNewRecords(t *testing.T) {
 
 func TestSyncOnce_SkipsLedgerDuplicates(t *testing.T) {
 	store := newFakeStore()
-	// Pretend s1 was already synced previously.
-	store.ledger["s1"] = db.SubmissionRecord{FilloutSubmissionID: "s1", Outcome: db.OutcomeCreated}
+	// Pretend s1 was already synced previously for this job.
+	store.ledger[ledgerKey{syncJobID: 1, submissionID: "s1"}] = db.SubmissionRecord{SyncJobID: 1, FilloutSubmissionID: "s1", Outcome: db.OutcomeCreated}
 
 	fc := &fakeFillout{subs: []fillout.Submission{sub("s1", 1, 9), sub("s2", 2, 7)}}
 	at := newFakeAirtable()
@@ -217,9 +223,9 @@ func TestSyncOnce_SkipsLedgerDuplicates(t *testing.T) {
 
 func TestSyncOnce_LedgerPreventsResyncOfDeletedRecord(t *testing.T) {
 	store := newFakeStore()
-	// s1 was synced before (in our ledger) but its Airtable record was manually
-	// deleted — the fake Airtable has no stamped records and would happily create.
-	store.ledger["s1"] = db.SubmissionRecord{FilloutSubmissionID: "s1", Outcome: db.OutcomeCreated}
+	// s1 was synced before for this job (in our ledger) but its Airtable record was
+	// manually deleted — the fake Airtable has no stamped records and would happily create.
+	store.ledger[ledgerKey{syncJobID: 1, submissionID: "s1"}] = db.SubmissionRecord{SyncJobID: 1, FilloutSubmissionID: "s1", Outcome: db.OutcomeCreated}
 
 	fc := &fakeFillout{subs: []fillout.Submission{sub("s1", 1, 9)}}
 	at := newFakeAirtable()
@@ -254,7 +260,7 @@ func TestSyncOnce_SkipsAirtableStamped(t *testing.T) {
 	if len(at.created) != 0 {
 		t.Errorf("airtable created %d, want 0 (already stamped)", len(at.created))
 	}
-	if rec := store.ledger["s1"]; rec.AirtableRecordID != "recExisting" {
+	if rec := store.ledger[ledgerKey{syncJobID: 1, submissionID: "s1"}]; rec.AirtableRecordID != "recExisting" {
 		t.Errorf("skipped ledger record id = %q, want recExisting", rec.AirtableRecordID)
 	}
 }
@@ -277,6 +283,37 @@ func TestSyncOnce_IdempotentAcrossRuns(t *testing.T) {
 	}
 }
 
+func TestSyncOnce_SameSubmissionCanSyncForDifferentJobs(t *testing.T) {
+	store := newFakeStore()
+	fc := &fakeFillout{subs: []fillout.Submission{sub("s1", 1, 9)}}
+	at := newFakeAirtable()
+	m := testManager(store, fc, at)
+	mapping, _ := parseMapping(mappingJSON(t, MappingEntry{QuestionID: "q_score", Target: "score"}))
+
+	job1 := &db.SyncJob{ID: 1, FilloutFormID: "form1", AirtableTable: "NPS"}
+	job2 := &db.SyncJob{ID: 2, FilloutFormID: "form1", AirtableTable: "Other NPS"}
+
+	m.syncOnce(context.Background(), job1, mapping, nil)
+	m.syncOnce(context.Background(), job2, mapping, nil)
+
+	if len(at.created) != 2 {
+		t.Fatalf("airtable created %d records, want 2", len(at.created))
+	}
+	created, skipped := store.outcomeCounts()
+	if created != 2 || skipped != 0 {
+		t.Fatalf("ledger created=%d skipped=%d, want 2/0", created, skipped)
+	}
+	for _, jobID := range []int64{job1.ID, job2.ID} {
+		rec, ok := store.ledger[ledgerKey{syncJobID: jobID, submissionID: "s1"}]
+		if !ok {
+			t.Fatalf("missing ledger row for job %d", jobID)
+		}
+		if rec.Outcome != db.OutcomeCreated {
+			t.Errorf("job %d outcome = %q, want %q", jobID, rec.Outcome, db.OutcomeCreated)
+		}
+	}
+}
+
 func TestSyncOnce_StopsAndRecordsErrorOnCreateFailure(t *testing.T) {
 	store := newFakeStore()
 	fc := &fakeFillout{subs: []fillout.Submission{sub("s1", 1, 9)}}
@@ -296,7 +333,7 @@ func TestSyncOnce_StopsAndRecordsErrorOnCreateFailure(t *testing.T) {
 	if cursor != nil {
 		t.Errorf("cursor = %v, want nil (no submission fully processed)", cursor)
 	}
-	if _, ok := store.ledger["s1"]; ok {
+	if _, ok := store.ledger[ledgerKey{syncJobID: 1, submissionID: "s1"}]; ok {
 		t.Error("failed submission must not be recorded in the ledger (so it retries)")
 	}
 }

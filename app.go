@@ -22,8 +22,8 @@ import (
 	"github.com/hackclub/fillout-ysws-nps/internal/nps"
 )
 
-//go:embed templates/*.html
-var templatesFS embed.FS
+//go:embed templates/*.html static/*
+var assetsFS embed.FS
 
 // formClient is the subset of the Fillout client the web layer needs.
 type formClient interface {
@@ -53,7 +53,7 @@ type Server struct {
 
 // NewServer constructs a Server and parses templates.
 func NewServer(cfg *config.Config, a *auth.Authenticator, store *db.DB, fc formClient, at airtableClient, mapper *nps.Mapper, manager *nps.Manager) (*Server, error) {
-	tmpl, err := template.ParseFS(templatesFS, "templates/*.html")
+	tmpl, err := template.ParseFS(assetsFS, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parsing templates: %w", err)
 	}
@@ -67,6 +67,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /login", s.auth.Login)
 	mux.HandleFunc("GET /callback", s.auth.Callback)
 	mux.HandleFunc("GET /logout", s.auth.Logout)
+	mux.HandleFunc("GET /static/app.css", serveStaticAsset("static/app.css", "text/css; charset=utf-8"))
+	mux.HandleFunc("GET /static/app.js", serveStaticAsset("static/app.js", "text/javascript; charset=utf-8"))
 	mux.HandleFunc("GET /{$}", s.handleHome)
 
 	mux.Handle("GET /forms/new", s.auth.RequireUser(http.HandlerFunc(s.handleNewForm)))
@@ -83,14 +85,14 @@ func (s *Server) Routes() http.Handler {
 
 // securityHeaders wraps h with conservative, app-wide security response headers.
 // HSTS is sent only when the app is served over HTTPS (https), so it never
-// pins plain-HTTP local dev. The CSP allows the inline <style>/<script> the
-// templates use plus the Hack Club asset host, and forbids framing.
+// pins plain-HTTP local dev. The CSP allows same-origin assets plus the Hack
+// Club asset host for images/fonts, and forbids framing.
 func securityHeaders(h http.Handler, https bool) http.Handler {
 	const csp = "default-src 'self'; " +
 		"img-src 'self' https://assets.hackclub.com data:; " +
 		"font-src https://assets.hackclub.com; " +
-		"style-src 'self' 'unsafe-inline'; " +
-		"script-src 'self' 'unsafe-inline'; " +
+		"style-src 'self'; " +
+		"script-src 'self'; " +
 		"frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		head := w.Header()
@@ -105,6 +107,18 @@ func securityHeaders(h http.Handler, https bool) http.Handler {
 	})
 }
 
+func serveStaticAsset(path, contentType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		b, err := assetsFS.ReadFile(path)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		_, _ = w.Write(b)
+	}
+}
+
 func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -116,6 +130,7 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 type baseView struct {
 	Title     string
 	UserEmail string
+	IsAdmin   bool
 	// CSRF is the per-session CSRF token embedded in every state-changing form.
 	CSRF string
 }
@@ -157,6 +172,7 @@ type jobRow struct {
 	LastPolled    string
 	LastPolledISO string
 	LastError     string
+	CanManage     bool
 }
 
 type previewView struct {
@@ -214,13 +230,19 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, "loading jobs", err)
 		return
 	}
+	jobIDs := make([]int64, 0, len(jobs))
+	for _, j := range jobs {
+		jobIDs = append(jobIDs, j.ID)
+	}
+	statsByJob, err := s.store.StatsForJobs(r.Context(), jobIDs)
+	if err != nil {
+		s.serverError(w, "loading job stats", err)
+		return
+	}
+
 	rows := make([]jobRow, 0, len(jobs))
 	for _, j := range jobs {
-		stats, err := s.store.StatsForJob(r.Context(), j.ID)
-		if err != nil {
-			s.serverError(w, "loading job stats", err)
-			return
-		}
+		stats := statsByJob[j.ID]
 		rows = append(rows, jobRow{
 			ID:            j.ID,
 			FormName:      j.FilloutFormName,
@@ -238,11 +260,12 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 			LastPolled:    formatTime(j.LastPolledAt),
 			LastPolledISO: isoTime(j.LastPolledAt),
 			LastError:     j.LastError,
+			CanManage:     s.canManageJob(user, j),
 		})
 	}
 
 	s.render(w, "page_dashboard", dashboardView{
-		baseView: baseView{Title: "Dashboard", UserEmail: user.Email, CSRF: s.auth.CSRFToken(r)},
+		baseView: baseView{Title: "Dashboard", UserEmail: user.Email, IsAdmin: s.cfg.IsAdmin(user.Email), CSRF: s.auth.CSRFToken(r)},
 		Flash:    r.URL.Query().Get("flash"),
 		Jobs:     rows,
 	})
@@ -386,7 +409,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	formName := strings.TrimSpace(r.FormValue("form_name"))
+	formName := strings.TrimSpace(meta.Name)
 	tagsInput := r.FormValue("tags")
 	mapping := nps.BuildMapping(meta.Questions,
 		func(qid string) string { return r.FormValue("target_" + qid) },
@@ -467,14 +490,21 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid job id", http.StatusBadRequest)
 		return
 	}
-	s.manager.StopJob(id)
+	job, err := s.store.GetJob(r.Context(), id)
+	if err != nil {
+		s.serverError(w, "loading job", err)
+		return
+	}
+	user, ok := s.requireCanManageJob(w, r, job)
+	if !ok {
+		return
+	}
 	if err := s.store.SetJobStatus(r.Context(), id, db.StatusStopped); err != nil {
 		s.serverError(w, "stopping job", err)
 		return
 	}
-	if user, ok := auth.UserFromContext(r.Context()); ok {
-		s.audit(r, db.AuditEntry{ActorEmail: user.Email, Action: db.ActionSyncStopped, SyncJobID: &id, Details: "Stopped sync."})
-	}
+	s.manager.StopJob(id)
+	s.audit(r, db.AuditEntry{ActorEmail: user.Email, Action: db.ActionSyncStopped, SyncJobID: &id, Details: "Stopped sync."})
 	http.Redirect(w, r, "/?flash="+url.QueryEscape("Sync stopped"), http.StatusFound)
 }
 
@@ -484,19 +514,22 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid job id", http.StatusBadRequest)
 		return
 	}
-	if err := s.store.SetJobStatus(r.Context(), id, db.StatusActive); err != nil {
-		s.serverError(w, "resuming job", err)
-		return
-	}
 	job, err := s.store.GetJob(r.Context(), id)
 	if err != nil {
 		s.serverError(w, "loading job", err)
 		return
 	}
-	s.manager.StartJob(job)
-	if user, ok := auth.UserFromContext(r.Context()); ok {
-		s.audit(r, db.AuditEntry{ActorEmail: user.Email, Action: db.ActionSyncResumed, SyncJobID: &id, FormID: job.FilloutFormID, Details: "Resumed sync."})
+	user, ok := s.requireCanManageJob(w, r, job)
+	if !ok {
+		return
 	}
+	if err := s.store.SetJobStatus(r.Context(), id, db.StatusActive); err != nil {
+		s.serverError(w, "resuming job", err)
+		return
+	}
+	job.Status = db.StatusActive
+	s.manager.StartJob(job)
+	s.audit(r, db.AuditEntry{ActorEmail: user.Email, Action: db.ActionSyncResumed, SyncJobID: &id, FormID: job.FilloutFormID, Details: "Resumed sync."})
 	http.Redirect(w, r, "/?flash="+url.QueryEscape("Sync resumed"), http.StatusFound)
 }
 
@@ -528,6 +561,9 @@ func (s *Server) handleRemoveConfirm(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, "loading job", err)
 		return
 	}
+	if _, ok := s.requireCanManageJob(w, r, job); !ok {
+		return
+	}
 	stats, err := s.store.StatsForJob(r.Context(), id)
 	if err != nil {
 		s.serverError(w, "loading job stats", err)
@@ -546,8 +582,9 @@ func (s *Server) handleRemoveConfirm(w http.ResponseWriter, r *http.Request) {
 
 // handleRemove stops a job's poller and deletes the job (its ledger rows cascade
 // away). When "delete_records" is set it also deletes, best-effort, the Airtable
-// records the sync created — captured from the ledger before the job is deleted.
-// Removing the sync always succeeds; record deletion is reported in the flash.
+// records the sync created — captured from the ledger after the poller is stopped
+// and before the job is deleted. Removing the sync always succeeds; record
+// deletion is reported in the flash.
 func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseJobID(r.FormValue("job_id"))
 	if !ok {
@@ -563,9 +600,20 @@ func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, "loading job", err)
 		return
 	}
+	user, ok := s.requireCanManageJob(w, r, job)
+	if !ok {
+		return
+	}
 	deleteRecords := r.FormValue("delete_records") != ""
 
-	// Capture the record IDs while the ledger still exists (DeleteJob cascades it).
+	if err := s.store.SetJobStatus(r.Context(), id, db.StatusStopped); err != nil {
+		s.serverError(w, "stopping job", err)
+		return
+	}
+	s.manager.StopJob(id)
+
+	// Capture the record IDs while the stopped job's ledger still exists
+	// (DeleteJob cascades it).
 	var recordIDs []string
 	if deleteRecords {
 		recordIDs, err = s.store.CreatedRecordIDs(r.Context(), id)
@@ -575,13 +623,11 @@ func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.manager.StopJob(id)
 	if err := s.store.DeleteJob(r.Context(), id); err != nil {
 		s.serverError(w, "removing job", err)
 		return
 	}
 
-	user, _ := auth.UserFromContext(r.Context())
 	formName := orDefault(job.FilloutFormName, job.FilloutFormID)
 
 	// Job is gone; record deletion is best-effort and reported, not fatal.
@@ -620,6 +666,9 @@ type auditRow struct {
 }
 
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
 	logs, err := s.store.ListAuditLogs(r.Context(), 200)
 	if err != nil {
 		s.serverError(w, "loading audit logs", err)
@@ -652,6 +701,42 @@ func (s *Server) audit(r *http.Request, e db.AuditEntry) {
 	}
 }
 
+func (s *Server) requestUser(r *http.Request) (auth.User, bool) {
+	if user, ok := auth.UserFromContext(r.Context()); ok {
+		return user, true
+	}
+	return s.auth.CurrentUser(r)
+}
+
+func (s *Server) canManageJob(user auth.User, job *db.SyncJob) bool {
+	if s.cfg.IsAdmin(user.Email) {
+		return true
+	}
+	owner := strings.TrimSpace(job.CreatedByEmail)
+	if owner == "" {
+		return false
+	}
+	return strings.EqualFold(owner, strings.TrimSpace(user.Email))
+}
+
+func (s *Server) requireCanManageJob(w http.ResponseWriter, r *http.Request, job *db.SyncJob) (auth.User, bool) {
+	user, ok := s.requestUser(r)
+	if !ok || !s.canManageJob(user, job) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return auth.User{}, false
+	}
+	return user, true
+}
+
+func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
+	user, ok := s.requestUser(r)
+	if !ok || !s.cfg.IsAdmin(user.Email) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return auth.User{}, false
+	}
+	return user, true
+}
+
 func tagsSummary(tags string) string {
 	if strings.TrimSpace(tags) == "" {
 		return ""
@@ -660,8 +745,8 @@ func tagsSummary(tags string) string {
 }
 
 func (s *Server) base(r *http.Request, title string) baseView {
-	user, _ := s.auth.CurrentUser(r)
-	return baseView{Title: title, UserEmail: user.Email, CSRF: s.auth.CSRFToken(r)}
+	user, _ := s.requestUser(r)
+	return baseView{Title: title, UserEmail: user.Email, IsAdmin: s.cfg.IsAdmin(user.Email), CSRF: s.auth.CSRFToken(r)}
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {

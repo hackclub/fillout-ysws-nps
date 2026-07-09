@@ -19,7 +19,7 @@ const syncBatchSize = 50
 // Store is the persistence the sync poller needs. The real *db.DB satisfies it.
 type Store interface {
 	ListActiveJobs(ctx context.Context) ([]*db.SyncJob, error)
-	ExistingSubmissionIDs(ctx context.Context, formID string, submissionIDs []string) (map[string]bool, error)
+	ExistingSubmissionIDs(ctx context.Context, syncJobID int64, submissionIDs []string) (map[string]bool, error)
 	RecordSubmissions(ctx context.Context, recs []db.SubmissionRecord) (int, error)
 	UpdateJobProgress(ctx context.Context, id int64, cursor *time.Time, polledAt time.Time, lastErr string) error
 }
@@ -244,15 +244,15 @@ func (m *Manager) syncOnce(ctx context.Context, job *db.SyncJob, mapping Mapping
 // record creation. It records every outcome in the ledger and advances
 // maxProcessed across all seen submissions.
 func (m *Manager) syncBatch(ctx context.Context, job *db.SyncJob, mapping Mapping, opts RecordOptions, batch []fillout.Submission, maxProcessed **time.Time) error {
-	// Authoritative "already synced" check against our own ledger. Because this
-	// runs before any Airtable lookup, a submission we've recorded is never
-	// re-created — so manually deleting its record in Airtable (e.g. a test
-	// record) does NOT cause it to be re-synced later.
+	// Authoritative "already synced" check against this job's ledger. Because this
+	// runs before any Airtable lookup, a submission we've recorded for this sync is
+	// never re-created by this job — so manually deleting its record in Airtable
+	// (e.g. a test record) does NOT cause it to be re-synced later.
 	ids := make([]string, len(batch))
 	for i, s := range batch {
 		ids[i] = s.SubmissionID
 	}
-	synced, err := m.store.ExistingSubmissionIDs(ctx, job.FilloutFormID, ids)
+	synced, err := m.store.ExistingSubmissionIDs(ctx, job.ID, ids)
 	if err != nil {
 		return err
 	}
