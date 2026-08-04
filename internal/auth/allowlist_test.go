@@ -1,10 +1,13 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -294,5 +297,102 @@ func TestAllowlist_IgnoresBlankAndNonStringCells(t *testing.T) {
 	}
 	if l.Allowed("") || l.Allowed("42") {
 		t.Error("blank/non-string cell produced a spurious allowed email")
+	}
+}
+
+// captureLog redirects the standard logger into a buffer for one test.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	flags, prefix, out := log.Flags(), log.Prefix(), log.Writer()
+	log.SetFlags(0)
+	log.SetPrefix("")
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetFlags(flags)
+		log.SetPrefix(prefix)
+		log.SetOutput(out)
+	})
+	return &buf
+}
+
+// A failed refresh silently denies every author-only login. It must always be
+// logged, and the line must say how many cached emails are still being served —
+// zero means nobody but ALLOWED_EMAILS can log in.
+func TestRefreshFailureIsLogged(t *testing.T) {
+	buf := captureLog(t)
+	lister := &fakeLister{err: errors.New("airtable is down")}
+	l := newAllowlist([]string{"zach@hackclub.com"}, lister, time.Minute, time.Nanosecond, time.Now)
+
+	if l.Allowed("author@example.com") {
+		t.Fatal("author allowed despite a failed refresh")
+	}
+
+	got := buf.String()
+	for _, want := range []string{AuthorsTable, "airtable is down", "0 cached author email(s)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log %q missing %q", got, want)
+		}
+	}
+}
+
+// A healthy refresh should report the list size once, then stay quiet: it runs
+// every few minutes for the life of the process.
+func TestSuccessfulRefreshLogsOnceThenOnChange(t *testing.T) {
+	buf := captureLog(t)
+	lister := &fakeLister{records: authorRecords("author@example.com")}
+	now := time.Now()
+	clock := func() time.Time { return now }
+	l := newAllowlist(nil, lister, time.Minute, time.Second, clock)
+
+	l.Allowed("author@example.com")
+	if got := strings.Count(buf.String(), "loaded 1 author email"); got != 1 {
+		t.Fatalf("first load logged %d times, want 1:\n%s", got, buf.String())
+	}
+
+	// Same list, cache expired: no new line.
+	now = now.Add(2 * time.Minute)
+	l.Allowed("author@example.com")
+	if got := strings.Count(buf.String(), "loaded 1 author email"); got != 1 {
+		t.Errorf("unchanged refresh logged again:\n%s", buf.String())
+	}
+
+	// The list grew: that is worth a line, so additions are timestamped.
+	lister.set(authorRecords("author@example.com", "second@example.com"), nil)
+	now = now.Add(2 * time.Minute)
+	l.Allowed("second@example.com")
+	if !strings.Contains(buf.String(), "loaded 2 author email") {
+		t.Errorf("changed list was not logged:\n%s", buf.String())
+	}
+}
+
+// Explain is what turns "forbidden" into an actionable log line, so it has to
+// name both sources and their sizes.
+func TestExplainNamesBothSourcesAndSizes(t *testing.T) {
+	lister := &fakeLister{records: authorRecords("author@example.com", "other@example.com")}
+	l := newAllowlist([]string{"zach@hackclub.com"}, lister, time.Minute, time.Second, time.Now)
+	l.Allowed("author@example.com") // prime the cache
+
+	got := l.Explain("stranger@example.com")
+	for _, want := range []string{"ALLOWED_EMAILS", "1 entries", "2 " + AuthorsTable} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Explain() = %q, missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "refresh failed") {
+		t.Errorf("Explain() blames a refresh failure that did not happen: %q", got)
+	}
+}
+
+// When the author list could not be refreshed, a refusal must say so — that is
+// the difference between "add this person" and "Airtable is down".
+func TestExplainReportsRefreshFailure(t *testing.T) {
+	captureLog(t)
+	lister := &fakeLister{err: errors.New("airtable is down")}
+	l := newAllowlist([]string{"zach@hackclub.com"}, lister, time.Minute, time.Second, time.Now)
+	l.Allowed("author@example.com")
+
+	if got := l.Explain("author@example.com"); !strings.Contains(got, "airtable is down") {
+		t.Errorf("Explain() = %q, does not mention the refresh failure", got)
 	}
 }

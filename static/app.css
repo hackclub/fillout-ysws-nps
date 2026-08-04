@@ -200,7 +200,17 @@ tbody tr:hover { background: var(--snow); }
   display: flex; gap: 0.6rem; align-items: flex-start; font-size: 0.95rem; }
 .notice.flash { background: rgba(51,214,166,.12); border: 1px solid rgba(51,214,166,.4); color: #0f6b50; }
 .notice.error { background: rgba(236,55,80,.08); border: 1px solid rgba(236,55,80,.35); color: #b3243b; }
+.notice.warn { background: rgba(255,140,55,.10); border: 1px solid rgba(255,140,55,.42); color: #96470a; }
 .notice .ic { flex: none; font-weight: 700; }
+
+/* ── "Already synced" page ────────────────────────────────────────── */
+/* The existing sync is shown as the same card the dashboard uses, so the
+   thing the user is being told about is recognisable at a glance. */
+.existing-sync { margin: 1.4rem 0 1.75rem; }
+.next-steps { margin: 0.5rem 0 1.5rem; padding-left: 1.15rem; display: grid; gap: 0.6rem;
+  color: var(--slate); max-width: 46rem; }
+.next-steps li { line-height: 1.55; }
+.next-steps strong { color: var(--dark); }
 
 /* ── Sample preview blocks ────────────────────────────────────────── */
 .sample { border: 1px solid var(--smoke); border-radius: var(--radius-sm); padding: 1rem 1.1rem; background: var(--snow); }

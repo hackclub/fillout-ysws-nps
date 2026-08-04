@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hackclub/fillout-ysws-nps/hcauth"
+	"github.com/hackclub/fillout-ysws-nps/internal/httplog"
 )
 
 func allowAll(string) bool { return true }
@@ -59,7 +60,7 @@ func cookieByName(resp *http.Response, name string) *http.Cookie {
 }
 
 func TestRequireUser_RedirectsWhenAnonymous(t *testing.T) {
-	a := New(nil, []byte("secret"), allowAll, false)
+	a := New(nil, []byte("secret"), AllowFunc(allowAll), false)
 	handler := a.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next handler should not run for anonymous request")
 	}))
@@ -76,7 +77,7 @@ func TestRequireUser_RedirectsWhenAnonymous(t *testing.T) {
 }
 
 func TestRequireUser_AllowsValidSession(t *testing.T) {
-	a := New(nil, []byte("secret"), allowAll, false)
+	a := New(nil, []byte("secret"), AllowFunc(allowAll), false)
 
 	// Forge a valid session cookie via setCookie.
 	setRec := httptest.NewRecorder()
@@ -119,7 +120,7 @@ func TestContextWithUserRoundTrip(t *testing.T) {
 
 func TestCurrentUser_RejectsExpiredOrDisallowed(t *testing.T) {
 	mk := func(allowed func(string) bool, exp int64) (*Authenticator, *http.Cookie) {
-		a := New(nil, []byte("secret"), allowed, false)
+		a := New(nil, []byte("secret"), AllowFunc(allowed), false)
 		rec := httptest.NewRecorder()
 		a.setCookie(rec, sessionCookie, session{Email: "zach@hackclub.com", ExpiresAt: exp}, sessionTTL)
 		return a, cookieByName(rec.Result(), sessionCookie)
@@ -145,7 +146,7 @@ func TestCurrentUser_RejectsExpiredOrDisallowed(t *testing.T) {
 }
 
 func TestCallback_StateMismatch(t *testing.T) {
-	a := New(nil, []byte("secret"), allowAll, false)
+	a := New(nil, []byte("secret"), AllowFunc(allowAll), false)
 
 	// Set a pending cookie with a known state.
 	rec := httptest.NewRecorder()
@@ -164,7 +165,7 @@ func TestCallback_StateMismatch(t *testing.T) {
 
 func TestCallback_HappyPathSetsSession(t *testing.T) {
 	oidc, _ := stubOIDC(t, "zach@hackclub.com", true)
-	a := New(oidc, []byte("secret"), allowAll, false)
+	a := New(oidc, []byte("secret"), AllowFunc(allowAll), false)
 
 	// Drive Login to get a matching pending cookie + state.
 	loginRec := httptest.NewRecorder()
@@ -210,7 +211,7 @@ func TestCallback_HappyPathSetsSession(t *testing.T) {
 
 func TestCallback_DisallowedEmailForbidden(t *testing.T) {
 	oidc, _ := stubOIDC(t, "stranger@example.com", true)
-	a := New(oidc, []byte("secret"), func(e string) bool { return e == "zach@hackclub.com" }, false)
+	a := New(oidc, []byte("secret"), AllowFunc(func(e string) bool { return e == "zach@hackclub.com" }), false)
 
 	loginRec := httptest.NewRecorder()
 	a.Login(loginRec, httptest.NewRequest(http.MethodGet, "/login", nil))
@@ -234,7 +235,7 @@ func TestCallback_DisallowedEmailForbidden(t *testing.T) {
 func TestCallback_UnverifiedEmailForbidden(t *testing.T) {
 	// allowAll would otherwise admit this email; the unverified flag must win.
 	oidc, _ := stubOIDC(t, "zach@hackclub.com", false)
-	a := New(oidc, []byte("secret"), allowAll, false)
+	a := New(oidc, []byte("secret"), AllowFunc(allowAll), false)
 
 	loginRec := httptest.NewRecorder()
 	a.Login(loginRec, httptest.NewRequest(http.MethodGet, "/login", nil))
@@ -271,7 +272,7 @@ func cookieForSession(t *testing.T, a *Authenticator, sess session) *http.Cookie
 }
 
 func TestRequireUser_EnforcesCSRFOnPOST(t *testing.T) {
-	a := New(nil, []byte("secret"), allowAll, false)
+	a := New(nil, []byte("secret"), AllowFunc(allowAll), false)
 	const email = "zach@hackclub.com"
 	sess := testSession(email, "csrf-seed-1")
 	sessCookie := cookieForSession(t, a, sess)
@@ -334,7 +335,7 @@ func TestRequireUser_EnforcesCSRFOnPOST(t *testing.T) {
 }
 
 func TestRequireUser_BindsCSRFToSession(t *testing.T) {
-	a := New(nil, []byte("secret"), allowAll, false)
+	a := New(nil, []byte("secret"), AllowFunc(allowAll), false)
 	const email = "zach@hackclub.com"
 	sessA := testSession(email, "csrf-seed-a")
 	sessB := testSession(email, "csrf-seed-b")
@@ -361,9 +362,91 @@ func TestRequireUser_BindsCSRFToSession(t *testing.T) {
 }
 
 func TestCSRFToken_EmptyWithoutSession(t *testing.T) {
-	a := New(nil, []byte("secret"), allowAll, false)
+	a := New(nil, []byte("secret"), AllowFunc(allowAll), false)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	if tok := a.CSRFToken(req); tok != "" {
 		t.Errorf("CSRFToken without session = %q, want empty", tok)
+	}
+}
+
+// A refused login is the single most confusing failure this app has: the user
+// sees "Access denied" and the server used to record nothing. The reason must
+// reach the request log, naming the address and why it was refused.
+func TestCallback_RefusedLoginIsLogged(t *testing.T) {
+	buf := captureLog(t)
+	oidc, _ := stubOIDC(t, "stranger@example.com", true)
+	a := New(oidc, []byte("secret"), AllowFunc(func(e string) bool { return e == "zach@hackclub.com" }), false)
+
+	loginRec := httptest.NewRecorder()
+	a.Login(loginRec, httptest.NewRequest(http.MethodGet, "/login", nil))
+	pending := cookieByName(loginRec.Result(), pendingCookie)
+	loc, _ := url.Parse(loginRec.Header().Get("Location"))
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?state="+loc.Query().Get("state")+"&code=auth-code", nil)
+	req.AddCookie(pending)
+	httplog.Middleware(http.HandlerFunc(a.Callback)).ServeHTTP(httptest.NewRecorder(), req)
+
+	got := buf.String()
+	for _, want := range []string{"status=403", "login refused", "stranger@example.com", "allow-list"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log %q missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "auth-code") {
+		t.Errorf("log leaks the OAuth authorization code: %q", got)
+	}
+}
+
+// An unverified email is refused for a different reason and needs a different
+// fix, so the log has to distinguish it from an allow-list refusal.
+func TestCallback_UnverifiedLoginIsLoggedDistinctly(t *testing.T) {
+	buf := captureLog(t)
+	oidc, _ := stubOIDC(t, "zach@hackclub.com", false)
+	a := New(oidc, []byte("secret"), AllowFunc(allowAll), false)
+
+	loginRec := httptest.NewRecorder()
+	a.Login(loginRec, httptest.NewRequest(http.MethodGet, "/login", nil))
+	pending := cookieByName(loginRec.Result(), pendingCookie)
+	loc, _ := url.Parse(loginRec.Header().Get("Location"))
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?state="+loc.Query().Get("state")+"&code=auth-code", nil)
+	req.AddCookie(pending)
+	httplog.Middleware(http.HandlerFunc(a.Callback)).ServeHTTP(httptest.NewRecorder(), req)
+
+	if got := buf.String(); !strings.Contains(got, "has not verified") {
+		t.Errorf("log %q does not identify the unverified email as the cause", got)
+	}
+}
+
+// A stale CSRF token produces a 403 that looks, to the user, exactly like an
+// authorization failure. The log must say which one it was.
+func TestRequireUser_CSRFRejectionIsLogged(t *testing.T) {
+	buf := captureLog(t)
+	a := New(nil, []byte("secret"), AllowFunc(allowAll), false)
+
+	rec := httptest.NewRecorder()
+	a.setCookie(rec, sessionCookie, session{
+		Email:     "user@example.com",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		CSRFSeed:  "seed",
+	}, time.Hour)
+
+	req := httptest.NewRequest(http.MethodPost, "/sync/start", strings.NewReader("csrf_token=wrong"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookieByName(rec.Result(), sessionCookie))
+
+	out := httptest.NewRecorder()
+	httplog.Middleware(a.RequireUser(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("handler ran despite a bad CSRF token")
+	}))).ServeHTTP(out, req)
+
+	if out.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", out.Code)
+	}
+	got := buf.String()
+	for _, want := range []string{"CSRF", `user="user@example.com"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log %q missing %q", got, want)
+		}
 	}
 }

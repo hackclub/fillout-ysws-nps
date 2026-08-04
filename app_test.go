@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"iter"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +20,7 @@ import (
 	"github.com/hackclub/fillout-ysws-nps/internal/auth"
 	"github.com/hackclub/fillout-ysws-nps/internal/config"
 	"github.com/hackclub/fillout-ysws-nps/internal/db"
+	"github.com/hackclub/fillout-ysws-nps/internal/httplog"
 	"github.com/hackclub/fillout-ysws-nps/internal/nps"
 	"github.com/hackclub/fillout-ysws-nps/openai"
 )
@@ -91,7 +94,7 @@ func stubOpenAIClient(t *testing.T, content string) *openai.Client {
 func newTestServer(t *testing.T, fc formClient, mapper *nps.Mapper) *Server {
 	t.Helper()
 	cfg := &config.Config{AirtableBaseID: "appTest", NPSTable: "NPS"}
-	a := auth.New(nil, []byte("secret"), func(string) bool { return true }, false)
+	a := auth.New(nil, []byte("secret"), auth.AllowFunc(func(string) bool { return true }), false)
 	at := &fakeAirtable{programs: []string{"Boba Drops", "Sprig"}}
 	s, err := NewServer(cfg, a, nil, fc, at, mapper, nil)
 	if err != nil {
@@ -291,7 +294,7 @@ func TestStartDuplicateReactivatesExistingStoppedJob(t *testing.T) {
 	manager := nps.NewManager(database, fc, at, time.Hour, nil)
 	t.Cleanup(manager.Shutdown)
 
-	s, err := NewServer(&config.Config{AirtableBaseID: "appTest", NPSTable: "NPS"}, auth.New(nil, []byte("secret"), func(string) bool { return true }, false), database, fc, at, nil, manager)
+	s, err := NewServer(&config.Config{AirtableBaseID: "appTest", NPSTable: "NPS"}, auth.New(nil, []byte("secret"), auth.AllowFunc(func(string) bool { return true }), false), database, fc, at, nil, manager)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -356,7 +359,7 @@ func TestNonOwnerDuplicateSyncIsExplainedNotReactivated(t *testing.T) {
 	at := &fakeAirtable{programs: []string{"Boba Drops"}}
 	manager := nps.NewManager(database, fc, at, time.Hour, nil)
 	t.Cleanup(manager.Shutdown)
-	s, err := NewServer(&config.Config{AirtableBaseID: "appTest", NPSTable: "NPS", AdminEmails: []string{"admin@example.com"}}, auth.New(nil, []byte("secret"), func(string) bool { return true }, false), database, fc, at, nil, manager)
+	s, err := NewServer(&config.Config{AirtableBaseID: "appTest", NPSTable: "NPS", AdminEmails: []string{"admin@example.com"}}, auth.New(nil, []byte("secret"), auth.AllowFunc(func(string) bool { return true }), false), database, fc, at, nil, manager)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -372,11 +375,25 @@ func TestNonOwnerDuplicateSyncIsExplainedNotReactivated(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body:\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "already being synced") {
-		t.Errorf("body does not explain the form is already synced:\n%s", body)
+	// The page has to answer, without a follow-up question: what happened, to
+	// which sync, who owns it, and what this user can do about it.
+	for _, want := range []string{
+		"already being synced",  // what happened
+		"Nothing was created",   // no duplicate, no partial state
+		"Existing Form",         // which form
+		formID,                  // its Fillout ID, for an unambiguous match
+		"owner@example.com",     // who to ask
+		"What to do next",       // the way out
+		"Duplicate the form in", // the actual fix for a weekly survey
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("duplicate page missing %q:\n%s", want, body)
+		}
 	}
-	if !strings.Contains(body, "owner@example.com") {
-		t.Errorf("body does not name the existing sync's owner:\n%s", body)
+	// It is stopped and this user cannot restart it: the page must say so rather
+	// than implying the sync is live.
+	if !strings.Contains(body, "not running") {
+		t.Errorf("duplicate page does not say the existing sync is stopped:\n%s", body)
 	}
 
 	got, err := database.GetJob(ctx, existing.ID)
@@ -429,7 +446,7 @@ func TestStartUsesRefetchedFilloutFormName(t *testing.T) {
 	at := &fakeAirtable{programs: []string{"Boba Drops"}}
 	manager := nps.NewManager(database, fc, at, time.Hour, nil)
 	t.Cleanup(manager.Shutdown)
-	s, err := NewServer(&config.Config{AirtableBaseID: "appTest", NPSTable: "NPS"}, auth.New(nil, []byte("secret"), func(string) bool { return true }, false), database, fc, at, nil, manager)
+	s, err := NewServer(&config.Config{AirtableBaseID: "appTest", NPSTable: "NPS"}, auth.New(nil, []byte("secret"), auth.AllowFunc(func(string) bool { return true }), false), database, fc, at, nil, manager)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -608,7 +625,7 @@ func dbBackedServer(t *testing.T) (*Server, *db.DB, *fakeAirtable) {
 	manager := nps.NewManager(database, fc, at, time.Hour, nil)
 	t.Cleanup(manager.Shutdown)
 	cfg := &config.Config{AirtableBaseID: "appTest", NPSTable: "NPS"}
-	s, err := NewServer(cfg, auth.New(nil, []byte("secret"), func(string) bool { return true }, false), database, fc, at, nil, manager)
+	s, err := NewServer(cfg, auth.New(nil, []byte("secret"), auth.AllowFunc(func(string) bool { return true }), false), database, fc, at, nil, manager)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -864,4 +881,87 @@ func TestNonAdminCannotViewAuditLog(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d; body:\n%s", rec.Code, rec.Body.String())
 	}
+}
+
+// The incident this logging exists for: a user hit "forbidden" and the server
+// recorded nothing — no request line, no audit row — so the cause had to be
+// reconstructed from gaps in a Postgres identity sequence. Every refusal must
+// now name the user, the request, and the reason.
+func TestForbiddenRequestIsLoggedWithUserAndReason(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL not set; skipping db integration test")
+	}
+	ctx := context.Background()
+	database, err := db.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(database.Close)
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	formID := "form-denial-logged-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	job, err := database.CreateJob(ctx, &db.SyncJob{
+		FilloutFormID:  formID,
+		AirtableBaseID: "appTest",
+		AirtableTable:  "NPS",
+		Mapping:        json.RawMessage(`{}`),
+		CreatedByEmail: "owner@example.com",
+		Status:         db.StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	manager := nps.NewManager(database, &fakeForms{}, &fakeAirtable{}, time.Hour, nil)
+	t.Cleanup(manager.Shutdown)
+	s, err := NewServer(&config.Config{AirtableBaseID: "appTest", NPSTable: "NPS"},
+		auth.New(nil, []byte("secret"), auth.AllowFunc(func(string) bool { return true }), false),
+		database, &fakeForms{}, &fakeAirtable{}, nil, manager)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	buf := captureLog(t)
+	req := httptest.NewRequest(http.MethodPost, "/sync/stop",
+		strings.NewReader("job_id="+strconv.FormatInt(job.ID, 10)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = withUser(req, "other@example.com")
+	rec := httptest.NewRecorder()
+	httplog.Middleware(http.HandlerFunc(s.handleStop)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body:\n%s", rec.Code, rec.Body.String())
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"status=403",
+		`user="other@example.com"`,    // who was refused
+		"may not manage sync job",     // why
+		strconv.FormatInt(job.ID, 10), // which sync
+		"owner@example.com",           // who to ask instead
+		`"/sync/stop"`,                // what they were trying to do
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("denial log %q missing %q", got, want)
+		}
+	}
+}
+
+// captureLog redirects the standard logger into a buffer for one test.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	flags, prefix, out := log.Flags(), log.Prefix(), log.Writer()
+	log.SetFlags(0)
+	log.SetPrefix("")
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetFlags(flags)
+		log.SetPrefix(prefix)
+		log.SetOutput(out)
+	})
+	return &buf
 }

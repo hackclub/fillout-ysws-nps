@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,15 @@ type Allowlist struct {
 	mu         sync.Mutex
 	cache      map[string]bool
 	validUntil time.Time
+	// lastErr is the error from the most recent refresh attempt, kept so a
+	// refusal can say whether the author list is trustworthy or simply failed to
+	// load. An Airtable outage denies every author, and that must not look the
+	// same in the log as an address that was never on the list.
+	lastErr error
+	// loggedCount is the author-email count reported by the last log line, so a
+	// steady-state refresh every few minutes stays silent.
+	loggedCount int
+	logged      bool
 }
 
 // NewAllowlist builds an Allowlist from the static ALLOWED_EMAILS list and an
@@ -108,16 +118,54 @@ func (l *Allowlist) authorEmails() map[string]bool {
 	ctx, cancel := context.WithTimeout(context.Background(), authorFetchTimeout)
 	defer cancel()
 	set, err := l.fetch(ctx)
+	l.lastErr = err
 	if err != nil {
 		if l.cache == nil {
 			l.cache = map[string]bool{}
 		}
 		l.validUntil = l.now().Add(l.errTTL)
+		// Always log a failure: while it lasts, every author-only login is
+		// refused, and that used to happen with no trace at all.
+		log.Printf("auth: refreshing the %s allow-list failed: %v — serving %d cached author email(s); author logins are denied while this count is 0",
+			AuthorsTable, err, len(l.cache))
+		l.logged, l.loggedCount = false, -1
 		return l.cache
 	}
 	l.cache = set
 	l.validUntil = l.now().Add(l.ttl)
+	// A healthy refresh happens every few minutes forever, so report only the
+	// first one and any change in size — enough to see the list is alive and to
+	// timestamp when someone was added or removed.
+	if !l.logged || l.loggedCount != len(set) {
+		log.Printf("auth: loaded %d author email(s) from %s", len(set), AuthorsTable)
+		l.logged, l.loggedCount = true, len(set)
+	}
 	return l.cache
+}
+
+// Allowed and Explain together satisfy the Allower interface the Authenticator
+// depends on.
+var _ Allower = (*Allowlist)(nil)
+
+// Explain describes in one line why email is not allowed to log in. It names
+// both sources and how many entries each holds, so "the address is not on the
+// list" is distinguishable from "the list failed to load" — the two have the
+// same symptom for the user and completely different fixes.
+func (l *Allowlist) Explain(email string) string {
+	if normalizeEmail(email) == "" {
+		return "the identity provider returned no email address"
+	}
+
+	l.mu.Lock()
+	authors, err := len(l.cache), l.lastErr
+	l.mu.Unlock()
+
+	reason := fmt.Sprintf("not in ALLOWED_EMAILS (%d entries) and not among the %d %s email(s) loaded from Airtable",
+		len(l.static), authors, AuthorsTable)
+	if err != nil {
+		reason += fmt.Sprintf("; the last allow-list refresh failed (%v), so that list may be incomplete", err)
+	}
+	return reason
 }
 
 // fetch reads the non-empty Hack Club Auth Email values from the YSWS Authors

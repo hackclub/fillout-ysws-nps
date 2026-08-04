@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hackclub/fillout-ysws-nps/hcauth"
+	"github.com/hackclub/fillout-ysws-nps/internal/httplog"
 )
 
 const (
@@ -49,26 +50,43 @@ type session struct {
 	CSRFSeed  string `json:"csrf,omitempty"`
 }
 
+// Allower decides who may log in. Explain is called only when Allowed says no,
+// and returns a one-line reason for the log: a refused login looks identical to
+// the user whether their address is genuinely not on the list or the list itself
+// failed to load, and those need different fixes.
+type Allower interface {
+	Allowed(email string) bool
+	Explain(email string) string
+}
+
+// AllowFunc adapts a bare predicate to Allower for tests and simple setups.
+type AllowFunc func(string) bool
+
+// Allowed reports whether email may log in.
+func (f AllowFunc) Allowed(email string) bool { return f(email) }
+
+// Explain returns the generic reason; richer sources (see Allowlist) say more.
+func (f AllowFunc) Explain(string) string { return "not permitted by the configured allow-list" }
+
 // Authenticator wires the Hack Club OIDC client to signed-cookie sessions and an
 // email allow-list.
 type Authenticator struct {
-	oidc    *hcauth.Client
-	signer  *signer
-	allowed func(string) bool
-	secure  bool
-	now     func() time.Time
+	oidc   *hcauth.Client
+	signer *signer
+	allow  Allower
+	secure bool
+	now    func() time.Time
 }
 
-// New builds an Authenticator. secret signs cookies; allowed reports whether an
-// email may log in; secure marks cookies Secure (set false for plain-HTTP local
-// dev).
-func New(oidc *hcauth.Client, secret []byte, allowed func(string) bool, secure bool) *Authenticator {
+// New builds an Authenticator. secret signs cookies; allow decides which emails
+// may log in; secure marks cookies Secure (set false for plain-HTTP local dev).
+func New(oidc *hcauth.Client, secret []byte, allow Allower, secure bool) *Authenticator {
 	return &Authenticator{
-		oidc:    oidc,
-		signer:  newSigner(secret),
-		allowed: allowed,
-		secure:  secure,
-		now:     time.Now,
+		oidc:   oidc,
+		signer: newSigner(secret),
+		allow:  allow,
+		secure: secure,
+		now:    time.Now,
 	}
 }
 
@@ -127,14 +145,17 @@ func (a *Authenticator) Callback(w http.ResponseWriter, r *http.Request) {
 	// person. Per OIDC, treat the email claim as authoritative only when
 	// email_verified is true.
 	if !info.EmailVerified {
+		httplog.Note(r, "login refused: Hack Club has not verified %q", info.Email)
 		a.renderUnverified(w, info.Email)
 		return
 	}
 
-	if !a.allowed(info.Email) {
+	if !a.allow.Allowed(info.Email) {
+		httplog.Note(r, "login refused for %q: %s", info.Email, a.allow.Explain(info.Email))
 		a.renderForbidden(w, info.Email)
 		return
 	}
+	httplog.SetUser(r, info.Email)
 	csrfSeed, err := randomToken()
 	if err != nil {
 		http.Error(w, "could not complete login (session setup failed)", http.StatusInternalServerError)
@@ -162,14 +183,17 @@ func (a *Authenticator) RequireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sess, ok := a.currentSession(r)
 		if !ok {
+			httplog.Note(r, "no valid session; redirected to /login")
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
 		user := User{Email: sess.Email}
+		httplog.SetUser(r, user.Email)
 		// Defense-in-depth CSRF check on mutating requests; SameSite=Lax cookies
 		// are the first line. The token is derived from the signing key and bound
 		// to the session, so a cross-site form cannot supply a valid one.
 		if !safeMethod(r.Method) && !a.validCSRF(r, sess) {
+			httplog.Note(r, "CSRF token missing or stale — usually a form left open across a re-login")
 			http.Error(w, "invalid or missing CSRF token", http.StatusForbidden)
 			return
 		}
@@ -225,7 +249,16 @@ func (a *Authenticator) currentSession(r *http.Request) (session, bool) {
 	if err := a.readCookie(r, sessionCookie, &s); err != nil {
 		return session{}, false
 	}
-	if s.ExpiresAt < a.now().Unix() || !a.allowed(s.Email) {
+	if s.ExpiresAt < a.now().Unix() {
+		httplog.Note(r, "session for %q expired", s.Email)
+		return session{}, false
+	}
+	// Re-checked on every request so revoking access takes effect immediately —
+	// which also means an allow-list that fails to load logs every holder of a
+	// valid session straight back out. Say so, rather than silently bouncing
+	// them to /login.
+	if !a.allow.Allowed(s.Email) {
+		httplog.Note(r, "session dropped for %q: %s", s.Email, a.allow.Explain(s.Email))
 		return session{}, false
 	}
 	return s, true

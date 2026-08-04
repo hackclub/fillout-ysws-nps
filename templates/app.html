@@ -366,15 +366,65 @@
 {{template "foot" .}}
 {{end}}
 
-{{define "page_message"}}
+{{define "page_duplicate"}}
 {{template "head" .}}
 {{template "nav" .}}
-<main>
+<main class="stack">
+  <div class="notice warn"><span class="ic">!</span><span>Nothing was created — this Fillout form already has a sync.</span></div>
   <div class="card">
-    <p class="eyebrow">Heads up</p>
-    <h1>{{.Heading}}</h1>
-    <p class="lede">{{.Message}}</p>
-    <div class="btn-row form-actions"><a class="btn primary" href="/">Back to dashboard</a></div>
+    <p class="eyebrow">Already connected</p>
+    <h1>{{if .Job.FormName}}“{{.Job.FormName}}”{{else}}This form{{end}} is already being synced</h1>
+    <p class="lede">{{.Job.CreatedBy}} connected this exact form on {{.SetUpOn}}. Setting it up a second time would write every submission to Airtable twice, so we kept the existing sync and created nothing.{{if .Restarted}} It had been stopped, so we started it again for you.{{end}}</p>
+
+    <div class="job existing-sync">
+      <div class="job-main">
+        <div class="flow">
+          <div class="flow-node">
+            <div class="role">Fillout form</div>
+            <div class="title">{{if .Job.FormName}}{{.Job.FormName}}{{else}}{{.Job.FormID}}{{end}}</div>
+            <div class="sub">{{.Job.FormID}}</div>
+          </div>
+          {{template "flow_arrow"}}
+          <div class="flow-node">
+            <div class="role">NPS table{{if .Job.YSWS}} · {{.Job.YSWS}}{{end}}</div>
+            <div class="title">{{.Job.Table}}</div>
+            <div class="sub">{{.Job.BaseID}}</div>
+          </div>
+        </div>
+        <div class="job-foot">
+          <div class="metrics">
+            <span class="metric"><span class="mk created"></span><b>{{.Job.Created}}</b> synced</span>
+            <span class="metric"><span class="mk skipped"></span><b>{{.Job.Skipped}}</b> dupes skipped</span>
+            {{if .Job.Errored}}<span class="metric"><span class="mk errored"></span><b>{{.Job.Errored}}</b> errors</span>{{end}}
+          </div>
+          {{if .Job.Tags}}<span class="pill tag">{{.Job.Tags}}</span>{{end}}
+        </div>
+      </div>
+      <div class="job-side">
+        {{if .Job.Running}}<span class="pill running"><span class="dot"></span>Running</span>
+        {{else}}<span class="pill stopped"><span class="dot"></span>{{.Job.Status}}</span>{{end}}
+        <div class="small muted">Last poll {{if .Job.LastPolledISO}}<time datetime="{{.Job.LastPolledISO}}" data-localtime>{{.Job.LastPolled}}</time>{{else}}{{.Job.LastPolled}}{{end}}</div>
+        <div class="small muted">Set up by {{.Job.CreatedBy}}</div>
+        {{if .Job.LastError}}<div class="errnote">⚠ {{.Job.LastError}}</div>{{end}}
+      </div>
+    </div>
+
+    <h2>What to do next</h2>
+    <ul class="next-steps">
+      <li><strong>Running a new round of the survey?</strong> Each round needs its own Fillout form. Duplicate the form in Fillout first, then come back and paste the <em>new</em> form's link — pasting this one will always land here.</li>
+      {{if .Job.CanManage}}
+      <li><strong>Need a different mapping, YSWS program, or tags?</strong> Remove this sync from the dashboard and set the form up again with the settings you want.</li>
+      {{else}}
+      <li><strong>Need a different mapping, YSWS program, or tags?</strong> Only {{.Job.CreatedBy}} or an admin can change this sync — ask them and they can remove it so you can set it up again.</li>
+      {{if not .Job.Running}}<li><strong>It's not running.</strong> {{.Job.CreatedBy}} or an admin has to start it again — you can't restart it by connecting the form.</li>{{end}}
+      {{end}}
+      <li><strong>Think this is wrong?</strong> The dashboard lists every sync, and the audit log records who set each one up and when.</li>
+    </ul>
+
+    <div class="btn-row form-actions">
+      <a class="btn primary" href="/forms/new">Connect a different form</a>
+      <a class="btn secondary" href="/">Back to dashboard</a>
+    </div>
   </div>
 </main>
 {{template "foot" .}}

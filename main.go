@@ -59,7 +59,7 @@ func main() {
 	// Login is allowed for ALLOWED_EMAILS plus anyone listed in the YSWS Authors
 	// table's Hack Club Auth Email field (read from Airtable, cached).
 	allowlist := auth.NewAllowlist(cfg.AllowedEmails, airtableClient)
-	authn := auth.New(oidc, cfg.SessionSecret, allowlist.Allowed, secureCookies)
+	authn := auth.New(oidc, cfg.SessionSecret, allowlist, secureCookies)
 	mapper := nps.NewMapper(openaiClient)
 	manager := nps.NewManager(store, filloutClient, airtableClient, cfg.PollInterval, nil)
 

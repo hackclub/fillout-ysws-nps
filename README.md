@@ -99,12 +99,44 @@ For Coolify or a similar platform:
 4. Expose container port `8080`; `/healthz` is the unauthenticated health check.
 5. Set `HC_AUTH_CALLBACK_BASE_URL` to the public app URL and register `<that URL>/callback` with Hack Club Auth.
 
+## Reading the logs
+
+The app writes one line per request to stdout (Coolify collects it). Health
+checks and static assets are skipped unless they fail:
+
+```
+http POST "/sync/start" status=200 dur=4.1s user="author@example.com" reason="form 45C9EcEQGFus is already synced by job 20 (set up by zach@hackclub.com); no duplicate created"
+http POST "/sync/stop" status=403 dur=2ms user="author@example.com" reason="author@example.com may not manage sync job 20 (form 45C9EcEQGFus, set up by zach@hackclub.com) and is not an admin"
+http GET "/callback" status=403 dur=310ms reason="login refused for \"someone@example.com\": not in ALLOWED_EMAILS (1 entries) and not among the 25 YSWS Authors email(s) loaded from Airtable"
+```
+
+Every refusal carries a `reason=`, so start there:
+
+```bash
+docker logs <container> | grep -E 'status=(4|5)[0-9][0-9]'   # everything that was refused or broke
+docker logs <container> | grep 'login refused'               # who could not sign in, and why
+docker logs <container> | grep 'allow-list'                  # allow-list loads and Airtable failures
+```
+
+The query string is never logged — the OAuth callback carries a single-use
+authorization code there. Paths and reasons are quoted, so a crafted request
+cannot forge extra log lines.
+
+A refused login says how many addresses each source held. `0 YSWS Authors
+email(s)` means the Airtable read failed and *every* author is locked out (a
+matching `refreshing the YSWS Authors allow-list failed` line will say why);
+a non-zero count means the address genuinely is not on the list.
+
+Sync setup, stop, resume, removal, and duplicate attempts are also recorded in
+the database and shown at `/audit`.
+
 ## Repository layout
 
 - `app.go` — HTTP routes, handlers, templates, static assets, and security headers.
 - `internal/nps` — sync manager, mapping, record building, and Airtable dedup logic.
 - `internal/db` — Postgres access and embedded migrations.
 - `internal/auth` and `hcauth` — session auth and Hack Club Auth client code.
+- `internal/httplog` — per-request logging and the `Note`/`SetUser` hooks handlers use to explain refusals.
 - `internal/config` — environment configuration loading and validation.
 - `fillout` — Fillout API client submodule.
 - `airtable` — Airtable API client submodule.

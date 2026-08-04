@@ -19,6 +19,7 @@ import (
 	"github.com/hackclub/fillout-ysws-nps/internal/auth"
 	"github.com/hackclub/fillout-ysws-nps/internal/config"
 	"github.com/hackclub/fillout-ysws-nps/internal/db"
+	"github.com/hackclub/fillout-ysws-nps/internal/httplog"
 	"github.com/hackclub/fillout-ysws-nps/internal/nps"
 )
 
@@ -80,7 +81,9 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /sync/remove", s.auth.RequireUser(http.HandlerFunc(s.handleRemoveConfirm)))
 	mux.Handle("POST /sync/remove", s.auth.RequireUser(http.HandlerFunc(s.handleRemove)))
 	mux.Handle("GET /audit", s.auth.RequireUser(http.HandlerFunc(s.handleAudit)))
-	return securityHeaders(mux, strings.HasPrefix(s.cfg.HCAuthCallbackBase, "https://"))
+	// httplog is outermost so every response — including ones written by the
+	// middleware below it — produces exactly one log line.
+	return httplog.Middleware(securityHeaders(mux, strings.HasPrefix(s.cfg.HCAuthCallbackBase, "https://")))
 }
 
 // securityHeaders wraps h with conservative, app-wide security response headers.
@@ -135,10 +138,18 @@ type baseView struct {
 	CSRF string
 }
 
-type messageView struct {
+// duplicateView backs the page shown when someone connects a form that already
+// has a sync. It carries the existing sync itself, not just prose about it, so
+// the user can see who set it up, whether it is running, and how much it has
+// synced — everything needed to decide what to do next.
+type duplicateView struct {
 	baseView
-	Heading string
-	Message string
+	Job jobRow
+	// SetUpOn is the existing sync's creation date, already formatted.
+	SetUpOn string
+	// Restarted reports that the existing sync had been stopped and this request
+	// started it again (only possible for someone who may manage it).
+	Restarted bool
 }
 
 type newFormView struct {
@@ -227,7 +238,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 
 	jobs, err := s.store.ListJobs(r.Context())
 	if err != nil {
-		s.serverError(w, "loading jobs", err)
+		s.serverError(w, r, "loading jobs", err)
 		return
 	}
 	jobIDs := make([]int64, 0, len(jobs))
@@ -236,32 +247,13 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 	statsByJob, err := s.store.StatsForJobs(r.Context(), jobIDs)
 	if err != nil {
-		s.serverError(w, "loading job stats", err)
+		s.serverError(w, r, "loading job stats", err)
 		return
 	}
 
 	rows := make([]jobRow, 0, len(jobs))
 	for _, j := range jobs {
-		stats := statsByJob[j.ID]
-		rows = append(rows, jobRow{
-			ID:            j.ID,
-			FormName:      j.FilloutFormName,
-			FormID:        j.FilloutFormID,
-			BaseID:        j.AirtableBaseID,
-			Table:         j.AirtableTable,
-			YSWS:          j.YSWSProgram,
-			Tags:          j.Tags,
-			CreatedBy:     j.CreatedByEmail,
-			Status:        j.Status,
-			Running:       s.manager.IsRunning(j.ID),
-			Created:       stats.Created,
-			Skipped:       stats.SkippedExisting,
-			Errored:       stats.Errored,
-			LastPolled:    formatTime(j.LastPolledAt),
-			LastPolledISO: isoTime(j.LastPolledAt),
-			LastError:     j.LastError,
-			CanManage:     s.canManageJob(user, j),
-		})
+		rows = append(rows, s.jobRowFor(user, j, statsByJob[j.ID]))
 	}
 
 	s.render(w, "page_dashboard", dashboardView{
@@ -361,7 +353,7 @@ func (s *Server) buildSamples(ctx context.Context, formID string, mapping nps.Ma
 func (s *Server) renderPreview(w http.ResponseWriter, r *http.Request, formID, formName string, mapping nps.Mapping, ysws, tags, errMsg string) {
 	programs, err := nps.ListProgramNames(r.Context(), s.airtable)
 	if err != nil {
-		s.serverError(w, "loading YSWS programs", err)
+		s.serverError(w, r, "loading YSWS programs", err)
 		return
 	}
 
@@ -420,7 +412,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	yswsInput := strings.TrimSpace(r.FormValue("ysws_program"))
 	programs, err := nps.ListProgramNames(r.Context(), s.airtable)
 	if err != nil {
-		s.serverError(w, "loading YSWS programs", err)
+		s.serverError(w, r, "loading YSWS programs", err)
 		return
 	}
 	canonicalYSWS, ok := nps.CanonicalProgram(programs, yswsInput)
@@ -435,7 +427,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	mappingJSON, err := json.Marshal(mapping)
 	if err != nil {
-		s.serverError(w, "encoding mapping", err)
+		s.serverError(w, r, "encoding mapping", err)
 		return
 	}
 
@@ -461,13 +453,13 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		// Only a manager (the owner or an admin) gets the existing sync ensured
 		// running: a duplicate attempt must never let someone else flip another
 		// user's deliberately stopped sync back on.
-		owner := orDefault(created.CreatedByEmail, "another user")
 		formLabel := orDefault(created.FilloutFormName, formID)
-		canManage := s.canManageJob(user, created)
 		detail := fmt.Sprintf("Attempted to set up a duplicate sync for %q; existing job kept.", formLabel)
-		if canManage {
+		restarted := false
+		if s.canManageJob(user, created) {
+			restarted = created.Status != db.StatusActive
 			if err := s.store.SetJobStatus(r.Context(), created.ID, db.StatusActive); err != nil {
-				s.serverError(w, "reactivating existing sync job", err)
+				s.serverError(w, r, "reactivating existing sync job", err)
 				return
 			}
 			created.Status = db.StatusActive
@@ -476,23 +468,26 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 			detail += " Actor cannot manage that sync, so its status was left unchanged."
 		}
 
-		outcome := "It's running now — no duplicate was created."
-		if created.Status != db.StatusActive {
-			outcome = fmt.Sprintf("That sync is currently %s and no duplicate was created — ask %s or an admin if it needs to be restarted.",
-				created.Status, owner)
+		stats, err := s.store.StatsForJobs(r.Context(), []int64{created.ID})
+		if err != nil {
+			s.serverError(w, r, "loading job stats", err)
+			return
 		}
+
+		httplog.Note(r, "form %s is already synced by job %d (set up by %s); no duplicate created",
+			formID, created.ID, orDefault(created.CreatedByEmail, "an unknown user"))
 		s.audit(r, db.AuditEntry{ActorEmail: user.Email, Action: db.ActionSyncDuplicateBlocked, SyncJobID: &created.ID, FormID: formID,
 			Details: detail})
-		s.render(w, "page_message", messageView{
-			baseView: s.base(r, "Already syncing"),
-			Heading:  "This form is already being synced",
-			Message: fmt.Sprintf("A sync for this form into %s / %s was set up by %s on %s. %s",
-				created.AirtableBaseID, created.AirtableTable, owner, created.CreatedAt.Format("Jan 2, 2006"), outcome),
+		s.render(w, "page_duplicate", duplicateView{
+			baseView:  s.base(r, "Already syncing"),
+			Job:       s.jobRowFor(user, created, stats[created.ID]),
+			SetUpOn:   created.CreatedAt.Format("Jan 2, 2006"),
+			Restarted: restarted,
 		})
 		return
 	}
 	if err != nil {
-		s.serverError(w, "creating sync job", err)
+		s.serverError(w, r, "creating sync job", err)
 		return
 	}
 
@@ -511,7 +506,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	}
 	job, err := s.store.GetJob(r.Context(), id)
 	if err != nil {
-		s.serverError(w, "loading job", err)
+		s.serverError(w, r, "loading job", err)
 		return
 	}
 	user, ok := s.requireCanManageJob(w, r, job)
@@ -519,7 +514,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.SetJobStatus(r.Context(), id, db.StatusStopped); err != nil {
-		s.serverError(w, "stopping job", err)
+		s.serverError(w, r, "stopping job", err)
 		return
 	}
 	s.manager.StopJob(id)
@@ -535,7 +530,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	}
 	job, err := s.store.GetJob(r.Context(), id)
 	if err != nil {
-		s.serverError(w, "loading job", err)
+		s.serverError(w, r, "loading job", err)
 		return
 	}
 	user, ok := s.requireCanManageJob(w, r, job)
@@ -543,7 +538,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.SetJobStatus(r.Context(), id, db.StatusActive); err != nil {
-		s.serverError(w, "resuming job", err)
+		s.serverError(w, r, "resuming job", err)
 		return
 	}
 	job.Status = db.StatusActive
@@ -577,7 +572,7 @@ func (s *Server) handleRemoveConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.serverError(w, "loading job", err)
+		s.serverError(w, r, "loading job", err)
 		return
 	}
 	if _, ok := s.requireCanManageJob(w, r, job); !ok {
@@ -585,7 +580,7 @@ func (s *Server) handleRemoveConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 	stats, err := s.store.StatsForJob(r.Context(), id)
 	if err != nil {
-		s.serverError(w, "loading job stats", err)
+		s.serverError(w, r, "loading job stats", err)
 		return
 	}
 	s.render(w, "page_remove_confirm", removeView{
@@ -616,7 +611,7 @@ func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.serverError(w, "loading job", err)
+		s.serverError(w, r, "loading job", err)
 		return
 	}
 	user, ok := s.requireCanManageJob(w, r, job)
@@ -626,7 +621,7 @@ func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 	deleteRecords := r.FormValue("delete_records") != ""
 
 	if err := s.store.SetJobStatus(r.Context(), id, db.StatusStopped); err != nil {
-		s.serverError(w, "stopping job", err)
+		s.serverError(w, r, "stopping job", err)
 		return
 	}
 	s.manager.StopJob(id)
@@ -637,13 +632,13 @@ func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 	if deleteRecords {
 		recordIDs, err = s.store.CreatedRecordIDs(r.Context(), id)
 		if err != nil {
-			s.serverError(w, "loading created records", err)
+			s.serverError(w, r, "loading created records", err)
 			return
 		}
 	}
 
 	if err := s.store.DeleteJob(r.Context(), id); err != nil {
-		s.serverError(w, "removing job", err)
+		s.serverError(w, r, "removing job", err)
 		return
 	}
 
@@ -690,7 +685,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	logs, err := s.store.ListAuditLogs(r.Context(), 200)
 	if err != nil {
-		s.serverError(w, "loading audit logs", err)
+		s.serverError(w, r, "loading audit logs", err)
 		return
 	}
 	rows := make([]auditRow, 0, len(logs))
@@ -720,11 +715,42 @@ func (s *Server) audit(r *http.Request, e db.AuditEntry) {
 	}
 }
 
+// requestUser resolves the caller and records them on the request's log line,
+// so every logged request — not only the ones that go through RequireUser — says
+// who made it.
 func (s *Server) requestUser(r *http.Request) (auth.User, bool) {
-	if user, ok := auth.UserFromContext(r.Context()); ok {
-		return user, true
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		user, ok = s.auth.CurrentUser(r)
 	}
-	return s.auth.CurrentUser(r)
+	if ok {
+		httplog.SetUser(r, user.Email)
+	}
+	return user, ok
+}
+
+// jobRowFor renders one sync job for display: its ledger counts, whether the
+// poller is live, and whether this viewer may manage it.
+func (s *Server) jobRowFor(user auth.User, j *db.SyncJob, stats db.JobStats) jobRow {
+	return jobRow{
+		ID:            j.ID,
+		FormName:      j.FilloutFormName,
+		FormID:        j.FilloutFormID,
+		BaseID:        j.AirtableBaseID,
+		Table:         j.AirtableTable,
+		YSWS:          j.YSWSProgram,
+		Tags:          j.Tags,
+		CreatedBy:     j.CreatedByEmail,
+		Status:        j.Status,
+		Running:       s.manager.IsRunning(j.ID),
+		Created:       stats.Created,
+		Skipped:       stats.SkippedExisting,
+		Errored:       stats.Errored,
+		LastPolled:    formatTime(j.LastPolledAt),
+		LastPolledISO: isoTime(j.LastPolledAt),
+		LastError:     j.LastError,
+		CanManage:     s.canManageJob(user, j),
+	}
 }
 
 func (s *Server) canManageJob(user auth.User, job *db.SyncJob) bool {
@@ -741,6 +767,8 @@ func (s *Server) canManageJob(user auth.User, job *db.SyncJob) bool {
 func (s *Server) requireCanManageJob(w http.ResponseWriter, r *http.Request, job *db.SyncJob) (auth.User, bool) {
 	user, ok := s.requestUser(r)
 	if !ok || !s.canManageJob(user, job) {
+		httplog.Note(r, "%s may not manage sync job %d (form %s, set up by %s) and is not an admin",
+			orDefault(user.Email, "an unauthenticated request"), job.ID, job.FilloutFormID, orDefault(job.CreatedByEmail, "an unknown user"))
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return auth.User{}, false
 	}
@@ -750,6 +778,8 @@ func (s *Server) requireCanManageJob(w http.ResponseWriter, r *http.Request, job
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 	user, ok := s.requestUser(r)
 	if !ok || !s.cfg.IsAdmin(user.Email) {
+		httplog.Note(r, "%s is not in ADMIN_EMAILS (%d configured)",
+			orDefault(user.Email, "an unauthenticated request"), len(s.cfg.AdminEmails))
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return auth.User{}, false
 	}
@@ -779,7 +809,8 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	_, _ = buf.WriteTo(w)
 }
 
-func (s *Server) serverError(w http.ResponseWriter, what string, err error) {
+func (s *Server) serverError(w http.ResponseWriter, r *http.Request, what string, err error) {
+	httplog.Note(r, "%s: %v", what, err)
 	log.Printf("%s: %v", what, err)
 	http.Error(w, "internal server error", http.StatusInternalServerError)
 }
