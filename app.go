@@ -454,24 +454,40 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	created, err := s.store.CreateJob(r.Context(), job)
 	if errors.Is(err, db.ErrJobExists) {
-		// Gracefully handle a sync that's already set up: authorized managers can
-		// make sure it's running and explain rather than duplicating.
-		if _, ok := s.requireCanManageJob(w, r, created); !ok {
-			return
+		// This form is already set up. Explain that rather than duplicating it —
+		// setting up a form is something every allow-listed user may attempt, so
+		// hitting an existing sync is a normal outcome, not an access error.
+		//
+		// Only a manager (the owner or an admin) gets the existing sync ensured
+		// running: a duplicate attempt must never let someone else flip another
+		// user's deliberately stopped sync back on.
+		owner := orDefault(created.CreatedByEmail, "another user")
+		formLabel := orDefault(created.FilloutFormName, formID)
+		canManage := s.canManageJob(user, created)
+		detail := fmt.Sprintf("Attempted to set up a duplicate sync for %q; existing job kept.", formLabel)
+		if canManage {
+			if err := s.store.SetJobStatus(r.Context(), created.ID, db.StatusActive); err != nil {
+				s.serverError(w, "reactivating existing sync job", err)
+				return
+			}
+			created.Status = db.StatusActive
+			s.manager.StartJob(created)
+		} else {
+			detail += " Actor cannot manage that sync, so its status was left unchanged."
 		}
-		if err := s.store.SetJobStatus(r.Context(), created.ID, db.StatusActive); err != nil {
-			s.serverError(w, "reactivating existing sync job", err)
-			return
+
+		outcome := "It's running now — no duplicate was created."
+		if created.Status != db.StatusActive {
+			outcome = fmt.Sprintf("That sync is currently %s and no duplicate was created — ask %s or an admin if it needs to be restarted.",
+				created.Status, owner)
 		}
-		created.Status = db.StatusActive
-		s.manager.StartJob(created)
 		s.audit(r, db.AuditEntry{ActorEmail: user.Email, Action: db.ActionSyncDuplicateBlocked, SyncJobID: &created.ID, FormID: formID,
-			Details: fmt.Sprintf("Attempted to set up a duplicate sync for %q; existing job kept.", orDefault(created.FilloutFormName, formID))})
+			Details: detail})
 		s.render(w, "page_message", messageView{
 			baseView: s.base(r, "Already syncing"),
 			Heading:  "This form is already being synced",
-			Message: fmt.Sprintf("A sync for this form into %s / %s was set up by %s on %s. It's running now — no duplicate was created.",
-				created.AirtableBaseID, created.AirtableTable, orDefault(created.CreatedByEmail, "another user"), created.CreatedAt.Format("Jan 2, 2006")),
+			Message: fmt.Sprintf("A sync for this form into %s / %s was set up by %s on %s. %s",
+				created.AirtableBaseID, created.AirtableTable, owner, created.CreatedAt.Format("Jan 2, 2006"), outcome),
 		})
 		return
 	}

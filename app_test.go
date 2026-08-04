@@ -315,7 +315,11 @@ func TestStartDuplicateReactivatesExistingStoppedJob(t *testing.T) {
 	}
 }
 
-func TestNonOwnerCannotReactivateDuplicateSync(t *testing.T) {
+// A user who is neither the owner nor an admin must not be able to flip
+// someone else's stopped sync back on by "setting up" the same form again. They
+// should still be told the form is already synced (and by whom) rather than
+// getting a bare "forbidden" at the end of the mapping flow.
+func TestNonOwnerDuplicateSyncIsExplainedNotReactivated(t *testing.T) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("DATABASE_URL not set; skipping db integration test")
@@ -364,9 +368,17 @@ func TestNonOwnerCannotReactivateDuplicateSync(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.handleStart(rec, req)
 
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d; body:\n%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body:\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "already being synced") {
+		t.Errorf("body does not explain the form is already synced:\n%s", body)
+	}
+	if !strings.Contains(body, "owner@example.com") {
+		t.Errorf("body does not name the existing sync's owner:\n%s", body)
+	}
+
 	got, err := database.GetJob(ctx, existing.ID)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
@@ -375,7 +387,22 @@ func TestNonOwnerCannotReactivateDuplicateSync(t *testing.T) {
 		t.Fatalf("status = %q, want %q", got.Status, db.StatusStopped)
 	}
 	if s.manager.IsRunning(existing.ID) {
-		t.Fatal("forbidden duplicate start reactivated the poller")
+		t.Fatal("duplicate start by a non-manager reactivated the poller")
+	}
+
+	logs, err := database.ListAuditLogs(ctx, 200)
+	if err != nil {
+		t.Fatalf("ListAuditLogs: %v", err)
+	}
+	var logged bool
+	for _, l := range logs {
+		if l.FormID == formID && l.Action == db.ActionSyncDuplicateBlocked && l.ActorEmail == "other@example.com" {
+			logged = true
+			break
+		}
+	}
+	if !logged {
+		t.Errorf("no %s audit entry recorded for the duplicate attempt", db.ActionSyncDuplicateBlocked)
 	}
 }
 
