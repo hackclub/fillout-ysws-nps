@@ -16,15 +16,20 @@ import (
 
 const (
 	defaultBaseURL = "https://api.openai.com/v1"
-	defaultModel   = "gpt-4o-mini"
+	defaultModel   = "gpt-6-luna"
+	// defaultReasoningEffort is sent with every request unless overridden.
+	// gpt-6-luna defaults to "medium"; field mapping does not need extra
+	// reasoning, and "none" is the fastest and cheapest setting.
+	defaultReasoningEffort = "none"
 )
 
 // Client talks to the OpenAI chat completions API.
 type Client struct {
-	apiKey     string
-	baseURL    string
-	model      string
-	httpClient *http.Client
+	apiKey          string
+	baseURL         string
+	model           string
+	reasoningEffort string
+	httpClient      *http.Client
 }
 
 // Option configures a Client.
@@ -40,6 +45,13 @@ func WithModel(model string) Option {
 	return func(c *Client) { c.model = model }
 }
 
+// WithReasoningEffort sets the default reasoning effort ("none", "low",
+// "medium", ...). An empty effort omits the parameter, which non-reasoning
+// models such as gpt-4o-mini require.
+func WithReasoningEffort(effort string) Option {
+	return func(c *Client) { c.reasoningEffort = effort }
+}
+
 // WithHTTPClient supplies a custom *http.Client.
 func WithHTTPClient(h *http.Client) Option {
 	return func(c *Client) { c.httpClient = h }
@@ -52,10 +64,11 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 		return nil, fmt.Errorf("openai: api key is required")
 	}
 	c := &Client{
-		apiKey:     apiKey,
-		baseURL:    defaultBaseURL,
-		model:      defaultModel,
-		httpClient: &http.Client{Timeout: 60 * time.Second},
+		apiKey:          apiKey,
+		baseURL:         defaultBaseURL,
+		model:           defaultModel,
+		reasoningEffort: defaultReasoningEffort,
+		httpClient:      &http.Client{Timeout: 60 * time.Second},
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -67,6 +80,9 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 type Request struct {
 	// Model overrides the client's default model when non-empty.
 	Model string
+	// ReasoningEffort overrides the client's default reasoning effort when
+	// non-empty.
+	ReasoningEffort string
 	// System is an optional system prompt.
 	System string
 	// Prompt is the user message. Required.
@@ -111,6 +127,10 @@ func (c *Client) Structured(ctx context.Context, req Request, out any) (string, 
 	if model == "" {
 		model = c.model
 	}
+	effort := req.ReasoningEffort
+	if effort == "" {
+		effort = c.reasoningEffort
+	}
 
 	messages := make([]chatMessage, 0, 2)
 	if req.System != "" {
@@ -119,8 +139,9 @@ func (c *Client) Structured(ctx context.Context, req Request, out any) (string, 
 	messages = append(messages, chatMessage{Role: "user", Content: req.Prompt})
 
 	body := chatRequest{
-		Model:    model,
-		Messages: messages,
+		Model:           model,
+		ReasoningEffort: effort,
+		Messages:        messages,
 		ResponseFormat: responseFormat{
 			Type: "json_schema",
 			JSONSchema: jsonSchema{
@@ -208,9 +229,10 @@ func (c *Client) do(ctx context.Context, body chatRequest) (string, error) {
 }
 
 type chatRequest struct {
-	Model          string         `json:"model"`
-	Messages       []chatMessage  `json:"messages"`
-	ResponseFormat responseFormat `json:"response_format"`
+	Model           string         `json:"model"`
+	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	Messages        []chatMessage  `json:"messages"`
+	ResponseFormat  responseFormat `json:"response_format"`
 }
 
 type chatMessage struct {

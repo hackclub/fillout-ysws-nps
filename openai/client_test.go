@@ -151,6 +151,69 @@ func TestStructuredPerRequestModelOverride(t *testing.T) {
 	}
 }
 
+func TestNewClientDefaultsToCurrentModelAndEffort(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &got)
+		writeCompletion(w, `{"name":"x","age":1}`)
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient("test-key", WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if _, err := c.Structured(context.Background(), Request{
+		Prompt: "hi", SchemaName: "person", Schema: personSchema,
+	}, &person{}); err != nil {
+		t.Fatalf("Structured: %v", err)
+	}
+	if got["model"] != "gpt-6-luna" {
+		t.Errorf("model = %v, want gpt-6-luna", got["model"])
+	}
+	if got["reasoning_effort"] != "none" {
+		t.Errorf("reasoning_effort = %v, want none", got["reasoning_effort"])
+	}
+}
+
+func TestStructuredReasoningEffortOverrides(t *testing.T) {
+	var got map[string]any
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		got = nil
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &got)
+		writeCompletion(w, `{"name":"x","age":1}`)
+	})
+	call := func(effort string) {
+		t.Helper()
+		if _, err := c.Structured(context.Background(), Request{
+			ReasoningEffort: effort, Prompt: "hi", SchemaName: "person", Schema: personSchema,
+		}, &person{}); err != nil {
+			t.Fatalf("Structured: %v", err)
+		}
+	}
+
+	call("high")
+	if got["reasoning_effort"] != "high" {
+		t.Errorf("per-request reasoning_effort = %v, want high", got["reasoning_effort"])
+	}
+
+	// A client without an effort (e.g. one pinned to a non-reasoning model)
+	// must omit the field entirely, which such models require.
+	WithReasoningEffort("")(c)
+	call("")
+	if _, ok := got["reasoning_effort"]; ok {
+		t.Errorf("reasoning_effort = %v, want it omitted", got["reasoning_effort"])
+	}
+
+	WithReasoningEffort("medium")(c)
+	call("")
+	if got["reasoning_effort"] != "medium" {
+		t.Errorf("client reasoning_effort = %v, want medium", got["reasoning_effort"])
+	}
+}
+
 func TestStructuredValidatesRequest(t *testing.T) {
 	c, _ := NewClient("sk-real")
 	cases := map[string]Request{
